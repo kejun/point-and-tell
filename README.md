@@ -8,11 +8,17 @@ Record your screen while explaining what should change. Mark the important momen
 
 <img src="docs/screenshots/primary-buttons-light.png" width=600>
 
-**Native macOS 11+, Intel + Apple Silicon. Preview v0.3.3.** No Electron, local language model, account, server, or database.
+**Native macOS 11+, Intel + Apple Silicon. Source v0.4.0.** No Electron, local language model, account, server, or database.
+
+The v0.4.0 source adds signed application updates: automatic checks, a **检查更新…** menu, and download/install/relaunch through Sparkle. Recording, transcription and export defer updates. See [update setup and release instructions](docs/AUTO-UPDATES.md). A signing-configured release is required to activate updating; ordinary unsigned-for-updates development builds keep it disabled.
 
 ## Get the app
 
-[Download v0.3.3 Universal](releases/v0.3.3/Point-and-Tell-v0.3.3-macOS-universal.zip?raw=true) for Intel and Apple Silicon. The application ZIP, SHA-256 checksum and exact source/build manifest are committed under [releases/v0.3.3](releases/v0.3.3). See the [release notes](releases/README.md) for verification and rollback details.
+<!-- published-release:start -->
+[Download v0.3.3 Universal](releases/v0.3.3/Point-and-Tell-v0.3.3-macOS-universal.zip?raw=true) for Intel and Apple Silicon. The application ZIP, SHA-256 checksum and exact source/build manifest are committed under [releases/v0.3.3](releases/v0.3.3).
+<!-- published-release:end -->
+
+See the [release notes](releases/README.md) for verification and rollback details. Users on v0.3.3 or earlier must manually install the first update-enabled release once.
 
 The app is ad-hoc signed, **not Apple-notarized**. On macOS 11, extract the ZIP, move the app to Applications, then use Finder → right-click → Open if Gatekeeper asks. Do not disable system security. No Apple Developer account is required to build locally.
 
@@ -60,7 +66,7 @@ ARCH=universal scripts/build-app.sh
 open 'dist/Point & Tell.app'
 ```
 
-The app targets macOS 11.0. A modern compiler/build Mac is required; running the built app on macOS 11 does not require Xcode. The package has no third-party dependencies. Core tests can run on Linux with Swift, while AppKit/AVFoundation compilation requires macOS.
+The app targets macOS 11.0. A modern compiler/build Mac is required; running the built app on macOS 11 does not require Xcode. The macOS executable embeds Sparkle 2.9.6 (exactly pinned, including the SwiftPM artifact checksum); the core has no third-party dependencies. Core tests can run on Linux with Swift, while AppKit/AVFoundation and Sparkle compilation require macOS. Keep Sparkle's bundled license and resources when packaging.
 
 See [design](docs/DESIGN.md), [test checklist](docs/TESTING.md) and [versioning](docs/VERSIONING.md).
 

@@ -65,7 +65,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private var timer: Timer?
     private var selectedDisplay: CGDirectDisplayID = CGMainDisplayID()
     private var pendingScreenshot = false
-    private var busy = false
+    private var processingBusy = false
+    private var updateController: UpdateController?
+    private var busy: Bool { processingBusy || (updateController?.blocksWork ?? false) }
     private var cancelRequested = false
     private var activeChunkID: UUID?
     private var workflowReady = false
@@ -90,6 +92,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                 switch result { case .success(let evidence): print(evidence); exit(0); case .failure(let error): fputs("Audio smoke failed: \(error.localizedDescription)\n", stderr); exit(1) }
             }; return
         }
+        installUpdater()
         NSApp.activate(ignoringOtherApps: true)
         showSetupPreferences(); setupController?.setLoading()
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -405,19 +408,47 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         print("FRAME_PICKER_SMOKE_OK · select adds, next selection replaces, saved immediately, card switching/refresh/busy state never assigns")
     }
 
+    private var updateActivity: UpdateActivity {
+        UpdateActivity(recordingBusy: recorder.isBusy, processingBusy: processingBusy,
+                       screenshotPending: pendingScreenshot, annotationOpen: drawing != nil,
+                       modalOpen: NSApp.modalWindow != nil || NSApp.windows.contains { $0.attachedSheet != nil })
+    }
+    private func installUpdater() {
+        let updater = UpdateController(activity: { [weak self] in
+            self?.updateActivity ?? UpdateActivity(processingBusy: true)
+        }, save: { [weak self] in self?.saveBeforeExit() ?? false },
+        mayPresentAutomatically: { [weak self] in self?.workflowReady == true },
+        changed: { [weak self] in self?.updateInterface() })
+        updateController = updater
+        if let menu = NSApp.mainMenu?.items.first?.submenu {
+            updater.addMenuItems(to: menu)
+        }
+        updater.start()
+    }
+    private func saveBeforeExit() -> Bool {
+        guard commitTiming() else { return false }
+        // Retry the full write even when timing is clean: a text autosave may
+        // previously have failed, leaving the only copy in memory.
+        do { try persist(); return true }
+        catch { report("保存失败，已取消退出或更新：" + error.localizedDescription); return false }
+    }
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if recorder.isRecording || busy {
+        if updateActivity.hasActiveWork {
+            updateController?.terminationWasCancelled()
             let alert = NSAlert(); alert.messageText = "仍有录制或处理正在进行"; alert.informativeText = "请先停止录制或取消转写，再退出。已保存的项目和录音会保留。"; alert.runModal()
             return .terminateCancel
         }
-        guard commitTiming() else { return .terminateCancel }
+        guard UpdateSessionGate.mayTerminate(activity: updateActivity, save: saveBeforeExit) else {
+            updateController?.terminationWasCancelled()
+            return .terminateCancel
+        }
         return .terminateNow
     }
     func applicationWillTerminate(_ notification: Notification) { if let key = hotKey { UnregisterEventHotKey(key) }; if let handler = eventHandler { RemoveEventHandler(handler) } }
-    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { !recorder.isRecording && !busy }
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { !updateActivity.hasActiveWork && !busy }
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         if sender === playbackWindow { closePlayback(); return true }
-        return !busy && !recorder.isBusy && commitTiming()
+        return !busy && !recorder.isBusy && saveBeforeExit()
     }
 
     private func button(_ title: String, _ action: Selector, idleOnly: Bool = false) -> NSButton {
@@ -688,7 +719,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     }
     @objc private func about() { let a = NSAlert(); a.messageText = "Point & Tell " + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""); a.informativeText = "适用于 macOS 11+ 的轻量屏幕讲解工具。\n录屏和标注本地保存；完成首次设置后，录制结束会自动上传音频转写。\n语音服务使用 qwen-audio-3.0-asr-flash。"; a.runModal() }
     private func setBusy(_ value: Bool, status: String? = nil) {
-        busy = value
+        processingBusy = value
         if value { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
         if let status = status { report(status) }
         updateInterface()

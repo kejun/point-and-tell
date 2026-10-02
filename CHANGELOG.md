@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0 — 2026-10-03
+
+- Add Sparkle 2.9.6, preserving macOS 11 and Universal support. Official builds check a signed HTTPS feed every 24 hours, expose Check for Updates and Automatic Checks, and require confirmation before installation.
+- Defer automatic offers during recording startup/finalization, transcription, export, screenshots, annotations and modal panels. Interactive updating temporarily locks new work; cancellation or failure restores editing.
+- Save the whole project again before updating or quitting, including text whose earlier autosave failed. Recheck active work and persistence before termination.
+- Embed Sparkle's framework and helpers with inside-out signing, preserving executable permissions, symlinks, resources and helper entitlements.
+- Add a main-branch release workflow: native checks, monotonic versions/builds, Ed25519-signed archive/feed, immutable archive URLs and a single fast-forward publication. Missing/mismatched keys stop publication.
+- Add maintainer Keychain/GitHub signing setup, release validation tests, real signature/corruption tests and update/rollback documentation.
+
+This source change does not publish an update-enabled download by itself. Configure signing and run the release workflow. Production old-to-new replacement/relaunch and macOS 11 permission/Keychain behavior still require the device checklist.
+
 ## 0.3.3 — 2026-10-02
 
 - Add Delete for the selected review card in the card list and Edit menu, with confirmation. Save deletion before updating the interface, select the adjacent card, renumber the list, and disable unavailable actions after the final deletion. Original media and source transcripts remain available.

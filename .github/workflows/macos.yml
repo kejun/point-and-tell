@@ -4,6 +4,7 @@ on:
     branches: [main]
   pull_request:
   workflow_dispatch:
+  workflow_call:
 permissions:
   contents: read
 jobs:
@@ -45,9 +46,13 @@ jobs:
       - name: Test pure core
         timeout-minutes: 5
         run: swift test --arch ${{ matrix.arch }}
+      - name: Test release metadata guards
+        run: python3 -m unittest discover -s scripts/tests -v
       - name: Build Universal macOS 11 app
         id: package
         run: ARCH=universal scripts/build-app.sh
+      - name: Verify Sparkle signatures and generated feed
+        run: scripts/test-update-tools.sh
       - name: Verify native AAC audio chain
         timeout-minutes: 4
         run: '"dist/Point & Tell.app/Contents/MacOS/PointAndTell" --audio-smoke-test "$PWD/dist/audio-smoke"'
