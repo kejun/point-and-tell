@@ -616,7 +616,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         } else {
             transcribeButton.title = (project?.asrChunks.contains { $0.state == .failed || $0.state == .pending } ?? false) ? "继续 / 重试转写" : "开始转写"
         }
-        transcribeButton.toolTip = "qwen-audio-3.0-asr-flash · 最终 JSON 响应；校验完整句/词时间戳后才标记完成。"
+        transcribeButton.toolTip = "qwen-audio-3.0-asr-flash · 校验完整句/词时间戳后才标记完成。"
         let count = project?.reviewCards.count ?? 0
         cardCount.stringValue = "卡片 · \(count)"
         workspaceTitle.stringValue = project?.title ?? "把想法讲清楚"
@@ -880,7 +880,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         let alert = NSAlert(); alert.messageText = "将本项目的音频发送给阿里云转写？"
         let isQuiet = source?.suspectedSilence == true
         let retryCount = project?.asrChunks.filter { $0.needsTimestampRetry }.count ?? 0
-        alert.informativeText = (isQuiet ? "本地检查发现电平很低，可能是静音。此检查只测幅度，不能判断是否有人声；建议取消并先试听。\n\n" : "") + "接收方：maas.qianwenaiapi.com\n模型：qwen-audio-3.0-asr-flash（最终 JSON，句/词时间戳）\n发送内容：本项目麦克风录音，按约 3 分钟分片。视频和截图不会上传。服务商可能按用量计费。\n该接口尚未通过真实付费请求验证。"
+        alert.informativeText = (isQuiet ? "本地检查发现电平很低，可能是静音。此检查只测幅度，不能判断是否有人声；建议取消并先试听。\n\n" : "") + "接收方：maas.qianwenaiapi.com\n模型：qwen-audio-3.0-asr-flash（句/词时间戳）\n发送内容：本项目麦克风录音，按约 3 分钟分片。视频和截图不会上传。服务商可能按用量计费。\n该接口尚未通过真实付费请求验证。"
         if retryCount > 0 {
             alert.informativeText += "\n\n本次会重新发送 \(retryCount) 个缺少完整时间戳的已完成片段，可能再次计费。新结果通过校验后才替换旧结果；手工编辑文字和已选截图会保留，未编辑的空配图卡片会重建。"
         }

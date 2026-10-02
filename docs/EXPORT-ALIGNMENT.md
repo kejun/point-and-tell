@@ -13,7 +13,7 @@ Old projects without word timestamps still open and export at sentence/manual pr
 
 The two primary actions are directly visible above the workspace: **导出独立 HTML…** and **导出图片 + Markdown…**. Both disable while busy and when there is nothing to export. The folder contains images, README.md, offline index.html, and sanitized project.json.
 
-Provider schema: https://help.aliyun.com/en/model-studio/fun-asr-flash-recorded-speech-recognition-http-api (sentence/word timestamps and finalized SSE events). See [Qwen ASR configuration](QWEN-ASR.md) for the v0.3.0 final JSON request and completion contract.
+Provider schema: https://help.aliyun.com/en/model-studio/fun-asr-flash-recorded-speech-recognition-http-api (sentence/word timestamps and finalized SSE events). See [Qwen ASR configuration](QWEN-ASR.md) for the v0.3.0 JSON/SSE timeline and completion contract.
 
 Verification covers multi-image interleaving in HTML/Markdown/JSON, chunk offsets, millisecond boundaries, equal-time images, Unicode/punctuation, missing/invalid timestamps, manual edits, old project decoding, and both visible buttons in compact/light/dark AppKit rendering.
 
