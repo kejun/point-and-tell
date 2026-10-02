@@ -14,6 +14,10 @@ The old drawing surface was a regular borderless NSWindow, which cannot become k
 
 Pen mode now uses a separate key-capable, nonactivating NSPanel, with explicit mouse input, first-click acceptance and a canvas first responder. The recording HUD remains non-key and above both the drawing surface and pen controls. Enter saves; Escape cancels. Save/cancel still complete at most once. A disconnected recording display produces an explicit error instead of silently making a bookmark when Pen was requested.
 
+## Screenshot selection
+
+The screenshot picker applies and saves its selection immediately: selecting the first image assigns it; another selection replaces the card's images. Separate Add/Replace buttons have been removed. Loading another card only restores its stored selection and preview. It does not write to the project. A failed save restores the previous selection. Picker items carry screenshot IDs so equal-time screenshots cannot target the wrong image. The native smoke fixture checks assignment, replacement, persisted state, card switching and busy-state rejection.
+
 ## Verification
 
 Core regression fixtures compare editor cards with export moments, exact millisecond offsets, text/whitespace preservation, selected images, repeated opens, manual edits, missing timing/images, and equal-time/screenshot-only groups. The exported HTML/Markdown/JSON fixture checks two actual cards rather than two internal sections of one card.

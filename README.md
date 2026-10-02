@@ -4,7 +4,7 @@
 
 Record your screen while explaining what should change. Mark the important moments, draw on a frozen screenshot, then turn your explanation into editable text-and-image cards and an offline HTML file.
 
-**New in v0.3.1:** the review workspace now creates the same timestamp-and-screenshot cards as the HTML export, including automatically regrouping unchanged older projects without re-uploading audio. Pen mode now uses a dedicated input panel for first-click drawing, drag strokes, undo/clear, Enter to save and Escape to cancel, while the recording toolbar stays visible. See [card and pen fixes](docs/CARDS-AND-PEN.md).
+**New in v0.3.1:** the review workspace now creates the same timestamp-and-screenshot cards as the HTML export, including automatically regrouping unchanged older projects without re-uploading audio. Pen mode now uses a dedicated input panel for first-click drawing, drag strokes, undo/clear, Enter to save and Escape to cancel, while the recording toolbar stays visible. Choosing an image in the card picker now saves it immediately and replaces the previous image, with no extra Add/Replace buttons. See [card and pen fixes](docs/CARDS-AND-PEN.md).
 
 <img src="docs/screenshots/review-light.png" width=600>
 

@@ -214,6 +214,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     }
                     self.table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false); self.loadCard()
                     try render("grouped-review", width: 1080, height: 760)
+                    try self.verifyFramePicker(store: demoStore)
                     try DrawingOverlay.verifyInteraction(directory: directory, toolbar: self.toolbar)
                     self.project = demo; self.editingCardID = nil; self.refresh()
                     self.window.makeKeyAndOrderFront(nil); self.window.makeFirstResponder(self.table)
@@ -313,6 +314,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         guard completions == 1 else { exit(22) }
         workflowReady = true; updateInterface(); window.makeKeyAndOrderFront(nil); setup.close()
         print("SETUP_SMOKE_OK · permissions/key/consent gate, keychain failure, one completion, no real credentials or permissions")
+    }
+
+    private func verifyFramePicker(store: ProjectStore) throws {
+        guard let anchors = project?.anchors, anchors.count >= 2 else { exit(26) }
+        project?.reviewCards[0].frameIDs = []; refresh()
+        table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false); loadCard()
+        framePicker.selectItem(at: 0)
+        guard project?.reviewCards[0].frameIDs.isEmpty == true else { exit(27) }
+        // Only the user action persists; loading/selecting a card does not.
+        framePicker.sendAction(framePicker.action, to: framePicker.target)
+        guard try store.load().reviewCards[0].frameIDs == [anchors[0].id], preview.image != nil else { exit(28) }
+        framePicker.selectItem(at: 1); framePicker.sendAction(framePicker.action, to: framePicker.target)
+        guard try store.load().reviewCards[0].frameIDs == [anchors[1].id] else { exit(29) }
+        let first = project!.reviewCards[0]
+        table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false); loadCard()
+        framePicker.selectItem(at: 0); framePicker.sendAction(framePicker.action, to: framePicker.target)
+        guard try store.load().reviewCards[1].frameIDs == [anchors[0].id], project?.reviewCards[0] == first else { exit(30) }
+        let snapshot = project!.reviewCards
+        refresh(); setBusy(true)
+        framePicker.selectItem(at: 1); framePicker.sendAction(framePicker.action, to: framePicker.target)
+        guard project?.reviewCards == snapshot, !framePicker.isEnabled else { exit(31) }
+        setBusy(false)
+        print("FRAME_PICKER_SMOKE_OK · select adds, next selection replaces, saved immediately, card switching/refresh/busy state never assigns")
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -501,8 +525,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         startField.delegate = self; endField.delegate = self
         let save = button("保存时间", #selector(saveCard), idleOnly: true); save.controlSize = .small
         let timing = row([caption("秒"), startField, caption("—"), endField, InterfaceStyle.spacer(), save])
-        framePicker.target = self; framePicker.action = #selector(showSelectedFrame)
-        framePicker.setAccessibilityLabel("项目截图，选择后预览")
+        framePicker.target = self; framePicker.action = #selector(selectFrame)
+        framePicker.setAccessibilityLabel("卡片截图，选择后自动保存，再次选择即替换")
+        framePicker.toolTip = "选择截图即保存；再次选择会替换当前卡片的配图。"
         framePicker.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         framePicker.widthAnchor.constraint(greaterThanOrEqualToConstant: 100).isActive = true
         preview.imageScaling = .scaleProportionallyUpOrDown
@@ -515,11 +540,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         previewEmpty.font = .systemFont(ofSize: 12); previewEmpty.textColor = .secondaryLabelColor
         previewEmpty.alignment = .center; previewEmpty.translatesAutoresizingMaskIntoConstraints = false; previewSurface.addSubview(previewEmpty)
         NSLayoutConstraint.activate([previewEmpty.centerXAnchor.constraint(equalTo: previewSurface.centerXAnchor), previewEmpty.centerYAnchor.constraint(equalTo: previewSurface.centerYAnchor)])
-        let replace = button("替换", #selector(replaceFrame), idleOnly: true)
-        let append = button("添加", #selector(appendFrame), idleOnly: true)
         let clear = button("移除配图", #selector(clearFrames), idleOnly: true)
-        [replace, append, clear].forEach { $0.controlSize = .small }
-        let images = row([framePicker, replace, append])
+        clear.controlSize = .small
+        let images = row([framePicker])
         frameTimeField.widthAnchor.constraint(equalToConstant: 74).isActive = true; frameTimeField.setAccessibilityLabel("从录屏取图的时间，秒")
         let extract = button("提取", #selector(extractManualFrame), idleOnly: true); extract.controlSize = .small
         let extraction = row([caption("取图 / 秒"), frameTimeField, extract, InterfaceStyle.spacer(), clear])
@@ -605,7 +628,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         case #selector(exportHTML), #selector(exportBundle): return !(project?.reviewCards.isEmpty ?? true) || !(project?.transcripts.isEmpty ?? true)
         case #selector(saveCard): return cardIndex != nil
         case #selector(clearFrames): return cardIndex.map { !(project?.reviewCards[$0].frameIDs.isEmpty ?? true) } ?? false
-        case #selector(replaceFrame), #selector(appendFrame): return cardIndex != nil && framePicker.indexOfSelectedItem >= 0
+        case #selector(selectFrame): return cardIndex != nil && framePicker.selectedItem != nil
         case #selector(extractManualFrame): return cardIndex != nil && project?.recording != nil
         default: return true
         }
@@ -1111,10 +1134,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         endField.stringValue = card.endSeconds.map { String(format: "%.3f", $0) } ?? ""
         cardInfo.stringValue = "讲解 \(String(format: "%02d", index + 1))"
         savedLabel.stringValue = "文字自动保存"
-        attachmentLabel.stringValue = card.frameIDs.isEmpty ? "尚未配图 · 预览后点击“添加”或“替换”" : "已配 \(card.frameIDs.count) 张图 · 导出时与讲解分组"
-        if let id = card.frameIDs.first, let anchorIndex = project?.anchors.firstIndex(where: { $0.id == id }) { framePicker.selectItem(at: anchorIndex) }
-        else { framePicker.select(nil) }
-        showSelectedFrame(); updateInterface()
+        attachmentLabel.stringValue = card.frameIDs.isEmpty ? "尚未配图 · 选择截图后自动保存" : "已配 \(card.frameIDs.count) 张图 · 选择其他截图即替换"
+        restoreFrameSelection(); updateInterface()
     }
     @objc private func saveCard() {
         guard !busy, cardIndex != nil, commitTiming() else { return }
@@ -1130,25 +1151,42 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         for anchor in project?.anchors ?? [] {
             let kind: String
             switch anchor.kind { case .pen: kind = "画笔标注"; case .bookmark: kind = "重点标记"; case .frame: kind = "录屏截图" }
-            framePicker.addItem(withTitle: String(format: "%.2f 秒 · %@", anchor.timestamp, kind))
+            // Explicit items preserve distinct screenshots even at equal times.
+            framePicker.addItem(withTitle: anchor.id.uuidString)
+            framePicker.lastItem?.title = String(format: "%.3f 秒 · %@", anchor.timestamp, kind)
+            framePicker.lastItem?.representedObject = anchor.id
         }
     }
-    @objc private func showSelectedFrame() {
-        let index = framePicker.indexOfSelectedItem
-        if let anchors = project?.anchors, anchors.indices.contains(index), let url = try? store?.resolveRelativePath(anchors[index].imageRelativePath, requireExisting: true) {
+    private func restoreFrameSelection() {
+        if let index = cardIndex, let id = project?.reviewCards[index].frameIDs.first,
+           let item = framePicker.itemArray.first(where: { ($0.representedObject as? UUID) == id }) { framePicker.select(item) }
+        else { framePicker.select(nil) }
+        showSelectedFrame()
+    }
+    private func showSelectedFrame() {
+        if let id = framePicker.selectedItem?.representedObject as? UUID,
+           let anchor = project?.anchors.first(where: { $0.id == id }),
+           let url = try? store?.resolveRelativePath(anchor.imageRelativePath, requireExisting: true) {
             preview.image = NSImage(contentsOf: url)
         } else { preview.image = nil }
         previewEmpty.isHidden = preview.image != nil
         updateInterface()
     }
-    private func assignFrame(replacing: Bool) {
-        guard !busy, commitTiming(), let index = cardIndex, let anchors = project?.anchors, anchors.indices.contains(framePicker.indexOfSelectedItem) else { return }
-        let id = anchors[framePicker.indexOfSelectedItem].id
-        if replacing { project?.reviewCards[index].frameIDs = [id] } else if project?.reviewCards[index].frameIDs.contains(id) == false { project?.reviewCards[index].frameIDs.append(id) }
-        do { try persist(); loadCard(); updateVisibleCard(at: index) } catch { fail(error) }
+    @objc private func selectFrame() {
+        guard !busy, !recorder.isBusy, let index = cardIndex,
+              project?.reviewCards[index].id == editingCardID,
+              let id = framePicker.selectedItem?.representedObject as? UUID,
+              project?.anchors.contains(where: { $0.id == id }) == true else { restoreFrameSelection(); return }
+        guard commitTiming() else { restoreFrameSelection(); return }
+        let previous = project?.reviewCards[index].frameIDs ?? []
+        project?.reviewCards[index].frameIDs = [id]
+        do {
+            try persist(); loadCard(); updateVisibleCard(at: index); savedLabel.stringValue = "配图已保存"
+        } catch {
+            project?.reviewCards[index].frameIDs = previous
+            restoreFrameSelection(); savedLabel.stringValue = "配图保存失败"; fail(error)
+        }
     }
-    @objc private func replaceFrame() { assignFrame(replacing: true) }
-    @objc private func appendFrame() { assignFrame(replacing: false) }
     @objc private func clearFrames() { guard !busy, commitTiming(), let index = cardIndex else { return }; project?.reviewCards[index].frameIDs = []; do { try persist(); loadCard(); updateVisibleCard(at: index) } catch { fail(error) } }
     @objc private func extractManualFrame() {
         guard !busy, commitTiming(), let index = cardIndex, let store = store, let recording = project?.recording, let timestamp = Double(frameTimeField.stringValue), timestamp.isFinite, timestamp >= 0, timestamp <= recording.durationSeconds else { report("请选择卡片，并输入录制范围内的秒数。"); return }

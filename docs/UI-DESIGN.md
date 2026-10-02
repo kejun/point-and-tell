@@ -25,7 +25,7 @@ SF system typography, SF Symbols, a forest-teal accent derived from the selected
 
 ## Interaction details
 
-Text saves to the local project as it changes. Timing drafts are validated and committed before card changes, project replacement, export and quit; invalid input stays visible for correction. Selecting a card without assigned images shows an empty preview. Choosing a screenshot previews it, while Add/Replace changes the exported selection. Busy states disable conflicting actions and show the existing cancellation control during transcription. File menu shortcuts: ⌘N new recording, ⌘O open, ⌘S save card, ⌘E export HTML. Global marking stays ⌃⌥M.
+Text saves to the local project as it changes. Timing drafts are validated and committed before card changes, project replacement, export and quit; invalid input stays visible for correction. Selecting a card without assigned images shows an empty preview. Choosing a screenshot immediately assigns or replaces the card image and saves it. The separate Add/Replace buttons are removed; programmatically restoring the selection when switching cards never writes an image change. Busy states disable conflicting actions and show the existing cancellation control during transcription. File menu shortcuts: ⌘N new recording, ⌘O open, ⌘S save card, ⌘E export HTML. Global marking stays ⌃⌥M.
 
 ## App icon
 
