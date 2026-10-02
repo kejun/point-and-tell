@@ -242,6 +242,35 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     self.project?.reviewCards = []; self.editingCardID = nil; self.refresh()
                     guard self.emptyContainer.isHidden == false, !self.exportHTMLButton.isEnabled && !self.exportBundleButton.isEnabled else { exit(10) }
                     try render("project-empty", width: 1080, height: 760)
+                    self.project?.captureState = .interrupted
+                    self.project?.recording = RecordingInfo(relativePath: "recording.mov", durationSeconds: 0,
+                        displayID: 1, fps: 5)
+                    self.updateInterface()
+                    guard self.emptyTitle.stringValue == "录制未能开始",
+                          self.emptyAction.action == #selector(self.startRecording), self.emptyAction.isEnabled,
+                          !self.transcribeButton.isEnabled, !self.emptySecondary.isEnabled else { exit(26) }
+                    try render("recording-start-failed", width: 1080, height: 760)
+                    let failure = CaptureFailure(stage: .movieStart, underlying: NSError(
+                        domain: "AVFoundationErrorDomain", code: -11800, userInfo: [
+                            NSLocalizedDescriptionKey: "The operation could not be completed",
+                            NSUnderlyingErrorKey: NSError(domain: NSOSStatusErrorDomain, code: -12780)
+                        ]))
+                    let failureAlert = RecordingFailureAlert.make(failure: failure,
+                        diagnostic: failure.diagnosticText, savedReport: true)
+                    guard failureAlert.messageText == "启动录屏文件写入失败",
+                          failureAlert.buttons.last?.title == "复制诊断",
+                          let scroll = failureAlert.accessoryView as? NSScrollView,
+                          let text = scroll.documentView as? NSTextView,
+                          text.isSelectable, !text.isEditable,
+                          text.string.contains("NSOSStatusErrorDomain (-12780)") else { exit(27) }
+                    failureAlert.layout()
+                    if let view = failureAlert.window.contentView,
+                       let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) {
+                        view.cacheDisplay(in: view.bounds, to: bitmap)
+                        try bitmap.representation(using: .png, properties: [:])?.write(
+                            to: directory.appendingPathComponent("recording-error-dialog.png"))
+                    }
+                    print("CAPTURE_FAILURE_SMOKE_OK · retry state, disabled empty-media actions, nested error codes, copy diagnostics")
                     self.project = nil; self.store = nil; self.refresh()
                     guard self.startButton.isEnabled, !self.transcribeButton.isEnabled else { exit(11) }
                     self.report("新建录制，边说边指。停止后可转写、校对并导出。")
@@ -624,7 +653,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         switch action {
         case #selector(startRecording), #selector(openProject), #selector(refreshMicrophones): return true
         case #selector(revealProject), #selector(addCard): return project != nil
-        case #selector(playRecording), #selector(transcribe): return project?.recording != nil
+        case #selector(playRecording), #selector(transcribe): return project?.recording != nil && !recordingNeverStarted
         case #selector(exportHTML), #selector(exportBundle): return !(project?.reviewCards.isEmpty ?? true) || !(project?.transcripts.isEmpty ?? true)
         case #selector(saveCard): return cardIndex != nil
         case #selector(clearFrames): return cardIndex.map { !(project?.reviewCards[$0].frameIDs.isEmpty ?? true) } ?? false
@@ -658,10 +687,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         workspaceTitle.toolTip = project?.title
         workspaceSubtitle.stringValue = project.map { "\(count) 张讲解卡片 · \($0.anchors.count) 张截图 · 本地项目" } ?? "录下画面和讲解，结束后自动转写成可以分享的图文卡片。"
         reviewContent.isHidden = count == 0; emptyContainer.isHidden = count > 0
-        emptyTitle.stringValue = project == nil ? "指向画面，说出想法" : "录制已就位，开始整理"
-        emptyDescription.stringValue = project == nil ? "录制时标记重点、圈画截图。\n结束后，把口述变成清晰的图文反馈。" : "录制结束后自动转写。若未完成，可从左侧继续或重试。\n原始录屏始终保留，也可手动整理。"
-        emptyAction.title = project == nil ? "开始第一次录制" : "添加第一张卡片"
-        emptyAction.action = project == nil ? #selector(startRecording) : #selector(addCard)
+        emptyTitle.stringValue = project == nil ? "指向画面，说出想法" : (recordingNeverStarted ? "录制未能开始" : "录制已就位，开始整理")
+        emptyDescription.stringValue = project == nil ? "录制时标记重点、圈画截图。\n结束后，把口述变成清晰的图文反馈。" : (recordingNeverStarted ? "请根据错误提示检查后，重新新建录制。\n本次项目与已写入的文件保留，未启动自动转写。" : "录制结束后自动转写。若未完成，可从左侧继续或重试。\n原始录屏始终保留，也可手动整理。")
+        emptyAction.title = project == nil ? "开始第一次录制" : (recordingNeverStarted ? "重新新建录制" : "添加第一张卡片")
+        emptyAction.action = project == nil || recordingNeverStarted ? #selector(startRecording) : #selector(addCard)
         emptyAction.setAccessibilityLabel(emptyAction.title)
         emptyAction.isEnabled = actionEnabled(emptyAction.action)
         emptySecondary.title = project == nil ? "打开已有项目…" : "试听录屏"
@@ -679,9 +708,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         loadCard(); updateInterface()
     }
     private var cardIndex: Int? { guard let count = project?.reviewCards.count, table.selectedRow >= 0, table.selectedRow < count else { return nil }; return table.selectedRow }
+    private var recordingNeverStarted: Bool {
+        project?.captureState == .interrupted && (project?.recording?.durationSeconds ?? 0) <= 0
+    }
 
     @objc private func startRecording() {
-        guard !busy, !recorder.isRecording else { return }
+        guard !busy, !recorder.isBusy else { return }
         guard isTestMode || (workflowReady && currentReadiness.canEnterWorkspace) else { showSetupPreferences(); return }
         refreshScreens(); refreshMicrophones()
         guard commitTiming() else { return }
@@ -768,7 +800,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         automaticGate.cancel()
         timer?.invalidate(); timer = nil; drawing?.cancel(); drawing = nil; toolbar.hideAfterRecording(); window.makeKeyAndOrderFront(nil)
         project?.recording?.durationSeconds = recorder.elapsedSeconds
-        project?.captureState = .interrupted; try? persist(); setBusy(false, status: "录制中断。已写入的文件保留在项目文件夹，可尝试重新打开。"); fail(error)
+        project?.captureState = .interrupted
+        let failure = CaptureFailure(stage: .recording, underlying: error)
+        let version = Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? "unknown"
+        let diagnostic = "Point & Tell \(version)\n\(ProcessInfo.processInfo.operatingSystemVersionString)\n" + failure.diagnosticText
+        var savedReport = false
+        if let store = store {
+            do {
+                let path = "capture-error-\(UUID().uuidString).txt"
+                try Data((diagnostic + "\n").utf8).write(to: store.resolveRelativePath(path), options: .atomic)
+                savedReport = true
+            } catch { /* The original recording error must remain visible if the disk is unwritable. */ }
+        }
+        try? persist()
+        setBusy(false, status: (failure.errorDescription ?? "录制失败") + "。已写入的文件仍保留，未启动自动转写。")
+        refresh()
+        let alert = RecordingFailureAlert.make(failure: failure, diagnostic: diagnostic, savedReport: savedReport)
+        if alert.runModal() == .alertSecondButtonReturn {
+            NSPasteboard.general.clearContents()
+            NSPasteboard.general.setString(diagnostic, forType: .string)
+        }
     }
     @objc private func refreshMicrophones() {
         guard !busy, !recorder.isBusy else { return }
