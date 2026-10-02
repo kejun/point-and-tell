@@ -21,12 +21,15 @@ jobs:
       - name: Toolchain
         run: swift --version && xcodebuild -version
       - name: Test pure core
+        timeout-minutes: 5
         run: swift test
       - name: Build Intel macOS 11 app
         run: ARCH=x86_64 scripts/build-app.sh
       - name: Verify native PCM extraction
+        timeout-minutes: 2
         run: '"dist/Point & Tell.app/Contents/MacOS/PointAndTell" --audio-smoke-test "$PWD/dist/audio-smoke"'
       - name: Render native review UI fixture
+        timeout-minutes: 2
         run: '"dist/Point & Tell.app/Contents/MacOS/PointAndTell" --smoke-test "$PWD/dist/ui-smoke"'
       - name: Upload ad-hoc signed app
         uses: actions/upload-artifact@v4

@@ -56,9 +56,12 @@ final class ASRTransportTests: XCTestCase {
     func testRequestDelegateIsReleasedAfterCompletion() {
         let finished = expectation(description: "finished")
         let transport = makeTransport(limit: 16)
-        var handle: ASRCancellable? = transport.send(request("exact-limit")) { _ in finished.fulfill() }
-        weak var operation = handle as? ASRURLSessionRequest
-        handle = nil
+        weak var operation: ASRURLSessionRequest?
+        drainingAutoreleasePool {
+            var handle: ASRCancellable? = transport.send(request("exact-limit")) { _ in finished.fulfill() }
+            operation = handle as? ASRURLSessionRequest
+            handle = nil
+        }
         wait(for: [finished], timeout: 3)
         let released = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in operation == nil }, object: nil)
         wait(for: [released], timeout: 3)
@@ -67,9 +70,12 @@ final class ASRTransportTests: XCTestCase {
     func testRequestDelegateIsReleasedAfterSizeFailure() {
         let finished = expectation(description: "failed")
         let transport = makeTransport(limit: 16)
-        var handle: ASRCancellable? = transport.send(request("stream-overflow")) { _ in finished.fulfill() }
-        weak var operation = handle as? ASRURLSessionRequest
-        handle = nil
+        weak var operation: ASRURLSessionRequest?
+        drainingAutoreleasePool {
+            var handle: ASRCancellable? = transport.send(request("stream-overflow")) { _ in finished.fulfill() }
+            operation = handle as? ASRURLSessionRequest
+            handle = nil
+        }
         wait(for: [finished], timeout: 3)
         let released = XCTNSPredicateExpectation(predicate: NSPredicate { _, _ in operation == nil }, object: nil)
         wait(for: [released], timeout: 3)
@@ -133,6 +139,17 @@ final class ASRTransportTests: XCTestCase {
         request.httpMethod = "POST"
         request.setValue(scenario, forHTTPHeaderField: "X-ASR-Test-Scenario")
         return request
+    }
+
+    /// URLSession and URLSessionTask bridge through Objective-C. Drain creation
+    /// temporaries before checking weak lifetime; XCTest's wait loop does not
+    /// establish an autorelease-pool boundary for the enclosing test method.
+    private func drainingAutoreleasePool(_ body: () -> Void) {
+        #if canImport(ObjectiveC)
+        autoreleasepool(invoking: body)
+        #else
+        body()
+        #endif
     }
 }
 

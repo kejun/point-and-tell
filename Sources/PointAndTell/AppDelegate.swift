@@ -154,7 +154,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         let controls = row([timerLabel, button("标记 ⌃⌥M", #selector(mark)), button("画笔", #selector(pen)), stopButton]); controls.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12); toolbar.contentView = controls
     }
     @objc private func about() { let a = NSAlert(); a.messageText = "Point & Tell 0.1.0"; a.informativeText = "适用于 macOS 11+ 的轻量屏幕讲解工具。\n录屏和标注本地保存；转写按需上传音频。\n这是早期版本，真实阿里云接口与旧款 Mac 性能需要设备验证。"; a.runModal() }
-    private func setBusy(_ value: Bool, status: String? = nil) { busy = value; idleButtons.forEach { $0.isEnabled = !value && !recorder.isRecording }; screenPicker.isEnabled = !value; fpsPicker.isEnabled = !value; if let status = status { statusLabel.stringValue = status } }
+    private func setBusy(_ value: Bool, status: String? = nil) { busy = value; transcriptEditor.isEditable = !value; startField.isEnabled = !value; endField.isEnabled = !value; framePicker.isEnabled = !value; frameTimeField.isEnabled = !value; apiKeyField.isEnabled = !value; idleButtons.forEach { $0.isEnabled = !value && !recorder.isRecording }; screenPicker.isEnabled = !value; fpsPicker.isEnabled = !value; if let status = status { statusLabel.stringValue = status } }
     private func persist() throws { if let project = project, let store = store { try store.save(project) } }
     private func fail(_ error: Error) { let alert = NSAlert(error: error); alert.runModal() }
     private func report(_ text: String) { statusLabel.stringValue = text }
