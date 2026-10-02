@@ -31,7 +31,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private let workspaceTitle = NSTextField(labelWithString: "把想法讲清楚")
     private let workspaceSubtitle = NSTextField(labelWithString: "录下画面和讲解，整理成可以直接分享的图文卡片。")
     private let stepLabel = NSTextField(labelWithString: "01  录制讲解     →     02  转写与整理     →     03  导出分享")
-    private let exportPicker = NSPopUpButton(frame: .zero, pullsDown: true)
+    private var exportHTMLButton: NSButton!
+    private var exportBundleButton: NSButton!
     private let cardCount = NSTextField(labelWithString: "讲解卡片")
     private let savedLabel = NSTextField(labelWithString: "文字自动保存")
     private let attachmentLabel = InterfaceStyle.text("尚未配图", size: 11, color: .secondaryLabelColor)
@@ -96,6 +97,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             let image = context.makeImage()!; try VisualCapture.save(image, to: demoStore.folderURL.appendingPathComponent("frames/demo.png"))
             let anchor = VisualAnchor(timestamp: 3.2, imageRelativePath: "frames/demo.png", kind: .pen)
             demo.anchors = [anchor]; demo.reviewCards = [ReviewCard(text: "请把右上角这个按钮改大一些，让操作更容易看见。", frameIDs: [anchor.id], startSeconds: 2.1, endSeconds: 7.8), ReviewCard(text: "这句暂时没有可靠时间戳，可以手动选图。")]
+            // Export fixture verifies the same source timing and assets used by the UI.
+            let late = VisualAnchor(timestamp: 8.123, imageRelativePath: "frames/demo.png")
+            let timed = TranscriptSegment(text: "请查看右上角的按钮。然后确认保存后的状态。", startSeconds: 2.101, endSeconds: 9.999,
+                words: [TranscriptWord(text: "请查看右上角的按钮。", startSeconds: 2.101, endSeconds: 3.801),
+                        TranscriptWord(text: "然后确认保存后的状态。", startSeconds: 8.003, endSeconds: 9.999)])
+            var exportDemo = demo
+            exportDemo.anchors.append(late); exportDemo.transcripts = [timed]
+            exportDemo.reviewCards = [ReviewCard(transcriptID: timed.id, text: timed.text,
+                frameIDs: [anchor.id, late.id], startSeconds: timed.startSeconds, endSeconds: timed.endSeconds)]
+            try ProjectExporter.exportHTML(project: exportDemo, store: demoStore, to: directory.appendingPathComponent("timeline.html"))
+            let bundleURL = directory.appendingPathComponent("timeline-bundle")
+            if FileManager.default.fileExists(atPath: bundleURL.path) { try FileManager.default.removeItem(at: bundleURL) }
+            try ProjectExporter.exportBundle(project: exportDemo, store: demoStore, to: bundleURL)
             try demoStore.save(demo); store = demoStore; project = demo; report("UI smoke fixture · 没有录屏、麦克风或网络请求"); refresh(); table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                 do {
@@ -107,13 +121,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                         guard let view = self.window.contentView else { throw ProjectError.projectAlreadyExists }
                         view.layoutSubtreeIfNeeded()
                         guard self.preview.bounds.height <= 280, !self.window.contentView!.hasAmbiguousLayout else { exit(5) }
+                        for button in [self.exportHTMLButton!, self.exportBundleButton!] {
+                            let rect = button.convert(button.bounds, to: view)
+                            guard view.bounds.contains(rect), !button.isHidden,
+                                  button.bounds.width >= button.intrinsicContentSize.width else { exit(13) }
+                        }
                         guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(2) }
                         view.cacheDisplay(in: view.bounds, to: rep)
                         guard let data = rep.representation(using: .png, properties: [:]) else { exit(3) }
                         try data.write(to: directory.appendingPathComponent(name + ".png"))
                     }
                     guard !self.transcriptEditor.string.isEmpty, self.apiKeyField.stringValue.isEmpty,
-                          self.exportPicker.isEnabled, self.emptyContainer.isHidden,
+                          self.exportHTMLButton.isEnabled && self.exportBundleButton.isEnabled, self.emptyContainer.isHidden,
                           let icon = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
                           NSImage(contentsOf: icon) != nil else { exit(2) }
                     self.window.makeFirstResponder(self.table)
@@ -131,10 +150,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     self.textDidChange(Notification(name: NSText.didChangeNotification))
                     guard try demoStore.load().reviewCards[1].text == "自动保存验证" else { exit(8) }
                     self.setBusy(true)
-                    guard !self.exportPicker.isEnabled, !self.startButton.isEnabled, !self.transcriptEditor.isEditable else { exit(9) }
+                    guard !self.exportHTMLButton.isEnabled && !self.exportBundleButton.isEnabled, !self.startButton.isEnabled, !self.transcriptEditor.isEditable else { exit(9) }
                     self.setBusy(false)
                     self.project?.reviewCards = []; self.editingCardID = nil; self.refresh()
-                    guard self.emptyContainer.isHidden == false, !self.exportPicker.isEnabled else { exit(10) }
+                    guard self.emptyContainer.isHidden == false, !self.exportHTMLButton.isEnabled && !self.exportBundleButton.isEnabled else { exit(10) }
                     try render("project-empty", width: 1080, height: 760)
                     self.project = nil; self.store = nil; self.refresh()
                     guard self.startButton.isEnabled, !self.transcribeButton.isEnabled else { exit(11) }
@@ -273,15 +292,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         workspaceTitle.lineBreakMode = .byTruncatingTail; workspaceTitle.maximumNumberOfLines = 1
         workspaceTitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         workspaceSubtitle.font = .systemFont(ofSize: 12); workspaceSubtitle.textColor = .secondaryLabelColor
-        exportPicker.addItem(withTitle: "导出…")
-        exportPicker.addItem(withTitle: "独立 HTML 网页…"); exportPicker.lastItem?.target = self; exportPicker.lastItem?.action = #selector(exportHTML)
-        exportPicker.addItem(withTitle: "图片 + Markdown 文件夹…"); exportPicker.lastItem?.target = self; exportPicker.lastItem?.action = #selector(exportBundle)
-        exportPicker.image = NSImage(systemSymbolName: "square.and.arrow.up", accessibilityDescription: nil)
-        exportPicker.imagePosition = .imageLeading; exportPicker.bezelStyle = .rounded
-        exportPicker.setAccessibilityLabel("导出讲解卡片")
+        exportHTMLButton = button("导出独立 HTML…", #selector(exportHTML), idleOnly: false)
+        exportBundleButton = button("导出图片 + Markdown…", #selector(exportBundle), idleOnly: false)
+        decorate(exportHTMLButton, symbol: "doc.richtext", primary: true)
+        decorate(exportBundleButton, symbol: "folder")
+        exportHTMLButton.toolTip = "导出可离线打开的独立网页（⌘E），按时间戳对齐语音和截图。"
+        exportBundleButton.toolTip = "导出包含图片、Markdown、独立 HTML 和图文时间信息的文件夹。"
+        exportHTMLButton.setAccessibilityLabel("导出独立 HTML 网页")
+        exportBundleButton.setAccessibilityLabel("导出图片和 Markdown 文件夹")
         let titleGroup = InterfaceStyle.column([workspaceTitle, workspaceSubtitle], spacing: 5)
-        exportPicker.setContentHuggingPriority(.required, for: .horizontal)
-        let header = row([titleGroup, exportPicker])
+        let header = titleGroup
+        let exports = row([exportHTMLButton!, exportBundleButton!, InterfaceStyle.spacer()])
         stepLabel.font = .systemFont(ofSize: 11, weight: .medium); stepLabel.textColor = InterfaceStyle.accent
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("card")); column.title = "讲解卡片"
@@ -315,7 +336,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         progress.style = .spinning; progress.controlSize = .small; progress.isDisplayedWhenStopped = false
         progress.widthAnchor.constraint(equalToConstant: 16).isActive = true; progress.heightAnchor.constraint(equalToConstant: 16).isActive = true
         let status = row([progress, statusLabel]); status.heightAnchor.constraint(equalToConstant: 34).isActive = true
-        let stack = InterfaceStyle.column([header, stepLabel, reviewContainer, InterfaceStyle.separator(), status], spacing: 16)
+        let stack = InterfaceStyle.column([header, exports, stepLabel, reviewContainer, InterfaceStyle.separator(), status], spacing: 16)
         InterfaceStyle.pin(stack, to: parent, inset: 22)
     }
 
@@ -457,7 +478,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         frameTimeField.isEnabled = editable && project?.recording != nil
         apiKeyField.isEnabled = !busy; screenPicker.isEnabled = !busy; fpsPicker.isEnabled = !busy; microphonePicker.isEnabled = !busy
         table.isEnabled = !busy
-        exportPicker.isEnabled = actionEnabled(#selector(exportHTML))
+        exportHTMLButton.isEnabled = actionEnabled(#selector(exportHTML))
+        exportBundleButton.isEnabled = actionEnabled(#selector(exportBundle))
         cancelASRButton.isHidden = !cancelASRButton.isEnabled
         transcribeButton.title = (project?.asrChunks.contains { $0.state == .failed || $0.state == .pending } ?? false) ? "继续 / 重试转写" : "开始转写"
         let count = project?.reviewCards.count ?? 0
@@ -773,7 +795,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                 switch result {
                 case .success(let sentences):
                     self.project?.asrChunks[index].sentences = sentences.map { sentence in
-                        TranscriptSegment(text: sentence.text, startSeconds: sentence.beginTimeMilliseconds.map { Double($0) / 1000 + chunk.startSeconds }, endSeconds: sentence.endTimeMilliseconds.map { Double($0) / 1000 + chunk.startSeconds })
+                        sentence.transcriptSegment(chunkOffset: chunk.startSeconds)
                     }; self.project?.asrChunks[index].state = .complete
                 case .failure(let error):
                     self.project?.asrChunks[index].state = self.cancelRequested ? .pending : .failed
@@ -893,7 +915,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         endField.stringValue = card.endSeconds.map { String(format: "%.3f", $0) } ?? ""
         cardInfo.stringValue = "讲解 \(String(format: "%02d", index + 1))"
         savedLabel.stringValue = "文字自动保存"
-        attachmentLabel.stringValue = card.frameIDs.isEmpty ? "尚未配图 · 预览后点击“添加”或“替换”" : "已配 \(card.frameIDs.count) 张图 · 按添加顺序导出"
+        attachmentLabel.stringValue = card.frameIDs.isEmpty ? "尚未配图 · 预览后点击“添加”或“替换”" : "已配 \(card.frameIDs.count) 张图 · 导出时与讲解分组"
         if let id = card.frameIDs.first, let anchorIndex = project?.anchors.firstIndex(where: { $0.id == id }) { framePicker.selectItem(at: anchorIndex) }
         else { framePicker.select(nil) }
         showSelectedFrame(); updateInterface()

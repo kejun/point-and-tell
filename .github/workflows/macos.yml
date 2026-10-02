@@ -55,6 +55,9 @@ jobs:
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         timeout-minutes: 2
         run: '"dist/Point & Tell.app/Contents/MacOS/PointAndTell" --smoke-test "$PWD/dist/ui-smoke"'
+      - name: Verify offline HTML in WebKit
+        timeout-minutes: 2
+        run: swift scripts/verify-export.swift "$PWD/dist/ui-smoke/timeline.html" "$PWD/dist/ui-smoke"
       - name: Upload ad-hoc signed app
         uses: actions/upload-artifact@v4
         with:
@@ -72,6 +75,8 @@ jobs:
           name: UI-smoke-evidence-${{ matrix.arch }}
           path: |
             dist/ui-smoke/*.png
+            dist/ui-smoke/timeline.html
+            dist/ui-smoke/timeline-bundle/**
             dist/audio-smoke/**/results.json
             dist/committed-audio-smoke/**/results.json
             dist/committed-ui-smoke/window.png

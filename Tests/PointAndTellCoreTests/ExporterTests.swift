@@ -24,6 +24,38 @@ final class ExporterTests: XCTestCase {
                                reviewCards: [ReviewCard(text: text, frameIDs: [anchor.id], startSeconds: 1, endSeconds: 2)])
     }
 
+    func testHTMLMarkdownAndJSONInterleaveEachPassageWithItsScreenshot() throws {
+        var source = try project()
+        let first = source.anchors[0]
+        let second = VisualAnchor(timestamp: 8.123, imageRelativePath: first.imageRelativePath)
+        source.anchors.append(second)
+        let transcript = TranscriptSegment(text: "第一步。第二步。", startSeconds: 1.001, endSeconds: 9.999,
+            words: [TranscriptWord(text: "第一步。", startSeconds: 1.001, endSeconds: 2.002),
+                    TranscriptWord(text: "第二步。", startSeconds: 8.003, endSeconds: 9.999)])
+        source.transcripts = [transcript]
+        source.reviewCards = [ReviewCard(transcriptID: transcript.id, text: transcript.text,
+            frameIDs: [second.id, first.id], startSeconds: transcript.startSeconds, endSeconds: transcript.endSeconds)]
+        let destination = root.appendingPathComponent("timeline")
+        XCTAssertTrue(try ProjectExporter.exportBundle(project: source, store: store, to: destination).warnings.isEmpty)
+        let html = try String(contentsOf: destination.appendingPathComponent("index.html"))
+        let articles = html.components(separatedBy: "<article").dropFirst().map { $0.components(separatedBy: "</article>")[0] }
+        XCTAssertEqual(articles.count, 2)
+        XCTAssertTrue(articles[0].contains("第一步。"))
+        XCTAssertFalse(articles[0].contains("第二步。"))
+        XCTAssertTrue(articles[0].contains("1.001 s – 2.002 s"))
+        XCTAssertTrue(articles[1].contains("第二步。"))
+        XCTAssertTrue(articles[1].contains("8.123 s"))
+        XCTAssertEqual(html.components(separatedBy: "data:image/png").count - 1, 2)
+        let markdown = try String(contentsOf: destination.appendingPathComponent("README.md"))
+        XCTAssertLessThan(markdown.range(of: first.id.uuidString.lowercased())!.lowerBound,
+                          markdown.range(of: "第二步。")!.lowerBound)
+        let json = try JSONSerialization.jsonObject(with: Data(contentsOf: destination.appendingPathComponent("project.json"))) as! [String: Any]
+        let cards = json["cards"] as! [[String: Any]]
+        let moments = cards[0]["moments"] as! [[String: Any]]
+        XCTAssertEqual(moments.map { $0["text"] as! String }.joined(), transcript.text)
+        XCTAssertEqual(moments[1]["startSeconds"] as? Double, 8.003)
+    }
+
     func testHTMLEscapesMaliciousTextAndEmbedsOnlyOfflineAssets() throws {
         let attack = "</title><script>alert('x')</script><img src=https://evil.example/x onerror=alert(1)> & 中文 🖊️"
         let source = try project(text: attack, title: attack)

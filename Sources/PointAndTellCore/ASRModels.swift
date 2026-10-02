@@ -8,20 +8,46 @@ public struct ASRSentence: Codable, Equatable {
     public let endTimeMilliseconds: Int?
     public let sentenceID: Int?
     public let channelID: Int?
+    public let words: [ASRWord]?
 
     public init(text: String, beginTimeMilliseconds: Int? = nil,
                 endTimeMilliseconds: Int? = nil, sentenceID: Int? = nil,
-                channelID: Int? = nil) {
+                channelID: Int? = nil, words: [ASRWord]? = nil) {
         self.text = text
         self.beginTimeMilliseconds = beginTimeMilliseconds
         self.endTimeMilliseconds = endTimeMilliseconds
         self.sentenceID = sentenceID
         self.channelID = channelID
+        self.words = words
     }
 
     public var hasCompleteTiming: Bool {
         guard let start = beginTimeMilliseconds, let end = endTimeMilliseconds else { return false }
         return start >= 0 && end >= start
+    }
+}
+
+public struct ASRWord: Codable, Equatable {
+    public let text: String
+    public let beginTimeMilliseconds: Int
+    public let endTimeMilliseconds: Int
+
+    public init(text: String, beginTimeMilliseconds: Int, endTimeMilliseconds: Int) {
+        self.text = text; self.beginTimeMilliseconds = beginTimeMilliseconds
+        self.endTimeMilliseconds = endTimeMilliseconds
+    }
+}
+
+public extension ASRSentence {
+    /// All times use the same recording clock; apply the chunk offset exactly once.
+    func transcriptSegment(chunkOffset: Double) -> TranscriptSegment {
+        TranscriptSegment(text: text,
+                          startSeconds: beginTimeMilliseconds.map { Double($0) / 1000 },
+                          endSeconds: endTimeMilliseconds.map { Double($0) / 1000 },
+                          words: words?.map { TranscriptWord(text: $0.text,
+                              startSeconds: Double($0.beginTimeMilliseconds) / 1000,
+                              endSeconds: Double($0.endTimeMilliseconds) / 1000) })
+            .offset(by: chunkOffset)
     }
 }
 

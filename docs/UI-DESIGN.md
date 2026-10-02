@@ -1,11 +1,11 @@
-# Native workspace · v0.2.0
+# Native workspace · v0.2.1
 
 The app now organizes the task around **record → review → share**. It remains dependency-free AppKit on macOS 11+; capture, WAV inspection and provider request behavior are unchanged.
 
 ## Workspace
 
 - **Sidebar:** chosen app identity, new/open project, screen/frame-rate/microphone settings, local playback and opt-in transcription. Settings scroll on short displays.
-- **Header:** project title, card/image counts and a single export menu. HTML and image + Markdown remain separate export choices.
+- **Header:** project title, card/image counts and two directly visible export buttons: **导出独立 HTML…** and **导出图片 + Markdown…**. Both remain visible in the compact layout.
 - **Card list:** numbered summaries with timing and image counts, native keyboard selection and an add action.
 - **Editor:** automatically saved text, explicit timing fields, large screenshot preview, attached-image count and image assignment tools. The editor scrolls independently on smaller windows.
 - **Status:** persistent two-line result/error feedback and an indeterminate progress indicator. Long status messages remain available in their tooltip.
@@ -29,7 +29,7 @@ The macOS CI matrix compiles both architectures, runs the existing core/audio ch
 
 ## Native screenshots
 
-Rendered by the actual AppKit application on the macOS CI runner ([source build](https://github.com/kejun/point-and-tell/actions/runs/36968091570)). The example recording image is a synthetic fixture; no private screen, microphone or API data is used. The runner's display constrains these captures to 680pt content height.
+Rendered by the actual AppKit application on the macOS CI runner ([source build](https://github.com/kejun/point-and-tell/actions/runs/37000170176)). The example recording image is a synthetic fixture; no private screen, microphone or API data is used. The runner's display constrains these captures to 680pt content height.
 
 ### Welcome
 

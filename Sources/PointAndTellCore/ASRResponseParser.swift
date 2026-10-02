@@ -44,6 +44,15 @@ public enum ASRResponseParser {
     private static func parseJSON(_ data: Data, redactingSecrets: [String]) throws -> ASRResult {
         let envelope = try decode(data, redactingSecrets: redactingSecrets)
         guard let output = envelope.output else { throw ASRError.malformedResponse }
+        if let payloads = output.sentences ?? output.output?.sentences, !payloads.isEmpty {
+            let sentences = try payloads.filter { $0.sentenceEnd != false }.map { try normalized($0) }
+            guard !sentences.isEmpty else { throw ASRError.noFinalSentences }
+            if let fullText = output.text ?? output.output?.text,
+               fullText.filter({ !$0.isWhitespace }) != sentences.map(\.text).joined().filter({ !$0.isWhitespace }) {
+                return ASRResult(sentences: [ASRSentence(text: fullText)])
+            }
+            return ASRResult(sentences: sentences, requestID: ASRSafeDiagnostics.requestID(envelope.requestID, redactingSecrets: redactingSecrets))
+        }
         if let payload = output.sentence ?? output.output?.sentence {
             guard payload.sentenceEnd != false else { throw ASRError.noFinalSentences }
             let sentence = try normalized(payload)
@@ -52,7 +61,14 @@ public enum ASRResponseParser {
                fullText.trimmingCharacters(in: .whitespacesAndNewlines)
                 != sentence.text.trimmingCharacters(in: .whitespacesAndNewlines) {
                 // Non-streaming output.sentence can describe only the last sentence.
-                // Retain all recognized text, without applying that sentence's times to it.
+                // Retain a verified final sentence's timing, but never apply it to the prefix.
+                let tail = sentence.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                let complete = fullText.trimmingCharacters(in: .whitespacesAndNewlines)
+                if !tail.isEmpty, complete.hasSuffix(tail), fullText.hasSuffix(sentence.text) {
+                    let prefix = String(fullText.dropLast(sentence.text.count))
+                    return ASRResult(sentences: [ASRSentence(text: prefix), sentence],
+                                     requestID: ASRSafeDiagnostics.requestID(envelope.requestID, redactingSecrets: redactingSecrets))
+                }
                 return ASRResult(sentences: [ASRSentence(text: fullText)], requestID: ASRSafeDiagnostics.requestID(envelope.requestID, redactingSecrets: redactingSecrets))
             }
             guard !sentence.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ASRError.noFinalSentences }
@@ -124,7 +140,25 @@ public enum ASRResponseParser {
         }
         return ASRSentence(text: text, beginTimeMilliseconds: payload.beginTime,
                            endTimeMilliseconds: payload.endTime,
-                           sentenceID: payload.sentenceID, channelID: payload.channelID)
+                           sentenceID: payload.sentenceID, channelID: payload.channelID,
+                           words: normalizedWords(payload))
+    }
+
+    private static func normalizedWords(_ payload: SentencePayload) -> [ASRWord]? {
+        guard let words = payload.words, !words.isEmpty else { return nil }
+        var result: [ASRWord] = []
+        for word in words {
+            guard word.fixed != false, let text = word.text, !text.isEmpty,
+                  let start = word.beginTime, let end = word.endTime,
+                  start >= 0, end >= start,
+                  start >= (payload.beginTime ?? 0), end <= (payload.endTime ?? Int.max),
+                  start >= (result.last?.beginTimeMilliseconds ?? 0),
+                  end >= (result.last?.endTimeMilliseconds ?? 0) else { return nil }
+            let punctuation = word.punctuation ?? ""
+            result.append(ASRWord(text: text.hasSuffix(punctuation) ? text : text + punctuation,
+                                  beginTimeMilliseconds: start, endTimeMilliseconds: end))
+        }
+        return result
     }
 
     private struct ErrorEnvelope: Decodable {
@@ -147,11 +181,13 @@ public enum ASRResponseParser {
     }
     private struct Output: Decodable {
         let sentence: SentencePayload?
+        let sentences: [SentencePayload]?
         let text: String?
         let output: InnerOutput?
     }
     private struct InnerOutput: Decodable {
         let sentence: SentencePayload?
+        let sentences: [SentencePayload]?
         let text: String?
     }
     private struct SentencePayload: Decodable {
@@ -161,9 +197,21 @@ public enum ASRResponseParser {
         let channelID: Int?
         let beginTime: Int?
         let endTime: Int?
+        let words: [WordPayload]?
         enum CodingKeys: String, CodingKey {
-            case text
+            case text, words
             case sentenceEnd = "sentence_end", sentenceID = "sentence_id", channelID = "channel_id"
+            case beginTime = "begin_time", endTime = "end_time"
+        }
+    }
+    private struct WordPayload: Decodable {
+        let text: String?
+        let punctuation: String?
+        let fixed: Bool?
+        let beginTime: Int?
+        let endTime: Int?
+        enum CodingKeys: String, CodingKey {
+            case text, punctuation, fixed
             case beginTime = "begin_time", endTime = "end_time"
         }
     }

@@ -50,6 +50,7 @@ public enum ProjectExporter {
         let timingStatus: String
         let images: [ExportImage]
         let missingImageCount: Int
+        let moments: [TranscriptMoment]
     }
     private struct ExportDocument: Codable {
         let schemaVersion: Int
@@ -175,13 +176,20 @@ public enum ProjectExporter {
                                           timestampSeconds: anchor.timestamp, endTimestampSeconds: anchor.endTimestamp,
                                           kind: anchor.kind))
             }
+            let transcript = project.transcripts.first { $0.id == card.transcriptID }
+            let moments = TranscriptAlignment.moments(card: card, transcript: transcript,
+                anchors: card.frameIDs.compactMap { anchors[$0] })
+            try addHTMLBudget(moments.count * 1_024)
+            if images.count > 1, moments.count == 1, moments[0].timingPrecision != "word" {
+                warnings.append("Card \(index + 1): word timing unavailable or edited; passage kept together with its selected screenshots.")
+            }
             exportedCards.append(ExportCard(id: card.id, text: card.text,
                                             startSeconds: card.isTimed ? card.startSeconds : nil,
                                             endSeconds: card.isTimed ? card.endSeconds : nil,
                                             timingStatus: card.isTimed ? "timed" : "untimed",
-                                            images: images, missingImageCount: missing))
+                                            images: images, missingImageCount: missing, moments: moments))
         }
-        return Prepared(document: ExportDocument(schemaVersion: 1, title: project.title,
+        return Prepared(document: ExportDocument(schemaVersion: 2, title: project.title,
                                                  createdAt: project.createdAt, cards: exportedCards),
                         imageData: imageData, warnings: warnings)
     }
@@ -189,15 +197,22 @@ public enum ProjectExporter {
     private static func renderHTML(_ prepared: Prepared) -> String {
         let title = escapeHTML(prepared.document.title)
         let cards = prepared.document.cards.enumerated().map { index, card in
-            let figures = card.images.compactMap { image -> String? in
-                guard let bytes = prepared.imageData[image.id] else { return nil }
-                return "<figure><img src=\"data:image/png;base64,\(bytes.base64EncodedString())\" alt=\"Screenshot for card \(index + 1)\"><figcaption>\(escapeHTML(timeLabel(image.timestampSeconds))) · \(image.kind.rawValue)</figcaption></figure>"
+            let moments = card.moments.map { moment -> String in
+                let figures = moment.imageIDs.compactMap { id -> String? in
+                    guard let image = card.images.first(where: { $0.id == id }),
+                          let bytes = prepared.imageData[id] else { return nil }
+                    return "<figure><img src=\"data:image/png;base64,\(bytes.base64EncodedString())\" alt=\"Screenshot for card \(index + 1)\"><figcaption>Screenshot · \(escapeHTML(timeLabel(image.timestampSeconds))) · \(image.kind.rawValue)</figcaption></figure>"
+                }.joined(separator: "\n")
+                let unavailable = moment.imageIDs.filter { id in !card.images.contains { $0.id == id } }.count
+                let unavailableNotice = unavailable > 0 ? "<p class=\"notice\">Selected screenshot unavailable (\(unavailable))</p>" : ""
+                let precision = precisionLabel(moment, imageCount: moment.imageIDs.count)
+                let timing = moment.startSeconds.flatMap { start in moment.endSeconds.map { "Speech · \(timeLabel(start)) – \(timeLabel($0))" } } ?? ""
+                return "<article class=\"moment\" data-timing=\"\(moment.timingPrecision)\"><div class=\"passage\"><p class=\"time\">\(escapeHTML(timing))</p><p class=\"transcript\">\(escapeHTML(moment.text))</p><p class=\"precision\">\(escapeHTML(precision))</p></div><div class=\"screenshots\">\(figures)\(unavailableNotice)</div></article>"
             }.joined(separator: "\n")
             let missing = card.missingImageCount > 0 ? "<p class=\"notice\">Image unavailable (\(card.missingImageCount))</p>" : ""
             let unselected = card.images.isEmpty && card.missingImageCount == 0
                 ? "<p class=\"notice\">No screenshot selected</p>" : ""
-            let timing = timingLabel(card)
-            return "<section class=\"card\"><h2>\(index + 1)</h2><p class=\"time\">\(escapeHTML(timing))</p><p class=\"transcript\">\(escapeHTML(card.text))</p>\(figures)\(missing)\(unselected)</section>"
+            return "<section class=\"card\"><h2>\(index + 1) · \(escapeHTML(timingLabel(card)))</h2>\(moments)\(missing)\(unselected)</section>"
         }.joined(separator: "\n")
         return """
         <!doctype html>
@@ -205,7 +220,7 @@ public enum ProjectExporter {
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <meta http-equiv="Content-Security-Policy" content="default-src 'none'; img-src data:; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'">
         <meta name="referrer" content="no-referrer"><title>\(title)</title>
-        <style>body{margin:0;background:#f4f4f2;color:#202624;font:17px/1.6 -apple-system,BlinkMacSystemFont,sans-serif}main{max-width:980px;margin:auto;padding:40px 24px}h1{line-height:1.15;overflow-wrap:anywhere}h2{font-size:15px;color:#596b62}.card{background:white;border:1px solid #dce2de;border-radius:16px;padding:24px;margin:22px 0;break-inside:avoid}.time,figcaption{font-size:13px;color:#66736c}.transcript{white-space:pre-wrap;overflow-wrap:anywhere}figure{margin:18px 0 0}img{display:block;max-width:100%;height:auto;border:1px solid #e3e7e4;border-radius:8px}.notice{color:#8c5029}footer{font-size:13px;color:#66736c}@media print{body{background:white}main{padding:0}.card{box-shadow:none}}</style></head>
+        <style>body{margin:0;background:#f4f4f2;color:#202624;font:17px/1.6 -apple-system,BlinkMacSystemFont,sans-serif}main{max-width:1120px;margin:auto;padding:40px 24px}h1{line-height:1.15;overflow-wrap:anywhere}h2{font-size:15px;color:#596b62}.card{background:white;border:1px solid #dce2de;border-radius:16px;padding:24px;margin:22px 0}.time,figcaption{font-size:13px;color:#66736c}.transcript{white-space:pre-wrap;overflow-wrap:anywhere}figure{margin:0 0 16px}.moment{display:grid;grid-template-columns:minmax(220px,0.8fr) minmax(0,1.2fr);gap:24px;padding:20px 0;break-inside:avoid}.moment+.moment{border-top:1px solid #e3e7e4}.passage p:first-child{margin-top:0}.precision{font-size:12px;color:#66736c}.screenshots{min-width:0}@media(max-width:720px){.moment{grid-template-columns:1fr;gap:8px}}img{display:block;max-width:100%;height:auto;border:1px solid #e3e7e4;border-radius:8px}.notice{color:#8c5029}footer{font-size:13px;color:#66736c}@media print{body{background:white}main{padding:0}.card{box-shadow:none}}</style></head>
         <body><main><h1>\(title)</h1>\(cards)<footer>Created with Point &amp; Tell · self-contained offline document</footer></main></body></html>
         """
     }
@@ -252,14 +267,32 @@ public enum ProjectExporter {
     private static func renderMarkdown(_ document: ExportDocument) -> String {
         var output = "# \(escapeMarkdown(document.title))\n\n"
         for (index, card) in document.cards.enumerated() {
-            output += "## \(index + 1)\n\n\(timingLabel(card))\n\n\(escapeMarkdown(card.text))\n\n"
-            for image in card.images {
-                output += "![Screenshot for card \(index + 1)](\(image.relativePath))\n\n"
+            output += "## \(index + 1) · \(timingLabel(card))\n\n"
+            for moment in card.moments {
+                if let start = moment.startSeconds, let end = moment.endSeconds {
+                    output += "Speech · \(timeLabel(start)) – \(timeLabel(end))\n\n"
+                }
+                output += "\(escapeMarkdown(moment.text))\n\n"
+                output += "\(precisionLabel(moment, imageCount: moment.imageIDs.count))\n\n"
+                for id in moment.imageIDs {
+                    guard let image = card.images.first(where: { $0.id == id }) else { continue }
+                    output += "![Screenshot for card \(index + 1)](\(image.relativePath))\n\nScreenshot · \(timeLabel(image.timestampSeconds))\n\n"
+                }
             }
             if card.missingImageCount > 0 { output += "Image unavailable (\(card.missingImageCount))\n\n" }
             if card.images.isEmpty && card.missingImageCount == 0 { output += "No screenshot selected\n\n" }
         }
         return output
+    }
+
+    private static func precisionLabel(_ moment: TranscriptMoment, imageCount: Int) -> String {
+        switch moment.timingPrecision {
+        case "word": return "Word timestamps · nearest selected screenshot"
+        case "screenshot-only": return "No speech assigned to this screenshot"
+        case "untimed": return "Untimed transcript · choose images manually"
+        case "manual": return imageCount > 1 ? "Edited passage · selected screenshots kept together; word alignment unavailable" : "Reviewed passage"
+        default: return imageCount > 1 ? "Sentence timing only · word timestamps unavailable; passage kept together" : "Sentence timestamps"
+        }
     }
 
     private static func timingLabel(_ card: ExportCard) -> String {
@@ -271,7 +304,7 @@ public enum ProjectExporter {
 
     private static func timeLabel(_ seconds: Double) -> String {
         guard seconds.isFinite, seconds >= 0 else { return "Time unavailable" }
-        return String(format: "%.2f s", locale: Locale(identifier: "en_US_POSIX"), seconds)
+        return String(format: "%.3f s", locale: Locale(identifier: "en_US_POSIX"), seconds)
     }
 
     public static func escapeHTML(_ text: String) -> String {

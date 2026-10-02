@@ -1,5 +1,19 @@
 # Download Point & Tell
 
+## v0.2.1 · Timestamp-aligned exports · Universal · macOS 11.0+
+
+[Download v0.2.1](v0.2.1/Point-and-Tell-v0.2.1-macOS-universal.zip?raw=true)
+
+Groups speech with the corresponding selected screenshots in HTML and Markdown using retained word timestamps. Shows actual speech/frame times to three decimal places, preserves manual edits, and explicitly labels missing word timing. Both export actions are directly visible above the workspace.
+
+- Archive: 2,306,948 bytes; Intel x86_64 + Apple Silicon arm64
+- [Exact source commit](https://github.com/kejun/point-and-tell/commit/a6d994d6bc7c315d8bfc84313761a93749593639) · [native build/test run](https://github.com/kejun/point-and-tell/actions/runs/37000170176)
+- 115 core tests on each architecture; native audio/UI checks and desktop/390px WebKit export rendering
+- [SHA-256](v0.2.1/Point-and-Tell-v0.2.1-macOS-universal.zip.sha256) · [build manifest](v0.2.1/build.json) · [alignment rules and limitations](../docs/EXPORT-ALIGNMENT.md)
+- Ad-hoc signed, not Apple-notarized. Actual macOS 11 device behavior and paid ASR accuracy remain unverified.
+
+Old projects with no stored word timestamps retain whole-sentence/manual grouping. This update does not silently re-upload their audio or invent missing timing.
+
 ## v0.2.0 · Native workspace & app icon · Universal · macOS 11.0+
 
 [Download v0.2.0](v0.2.0/Point-and-Tell-v0.2.0-macOS-universal.zip?raw=true)
