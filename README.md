@@ -6,7 +6,7 @@ Record your screen while explaining what should change. Mark the important momen
 
 ## Get the app
 
-Verified builds are stored in this repository under `releases/v0.1.0/` as one Universal app for Intel and Apple Silicon, together with SHA-256 checksums and the exact source commit used for the build. They are also available as GitHub Actions artifacts on the implementation pull request. Until that versioned directory exists, a downloadable build has not yet been published.
+[Download v0.1.0 Universal](releases/v0.1.0/Point-and-Tell-v0.1.0-macOS-universal.zip?raw=true) for Intel and Apple Silicon. The application ZIP, SHA-256 checksum and exact source/build manifest are committed under [releases/v0.1.0](releases/v0.1.0). See the [release notes](releases/README.md) for verification and rollback details.
 
 The app is ad-hoc signed, **not Apple-notarized**. On macOS 11, extract the ZIP, move the app to Applications, then use Finder → right-click → Open if Gatekeeper asks. Do not disable system security. No Apple Developer account is required to build locally.
 

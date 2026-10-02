@@ -1,0 +1,40 @@
+{
+  "version": "0.1.0",
+  "source_commit": "415b65b3a1fa9084852f1ff9dc898f780a1867a4",
+  "architecture": "universal",
+  "slices": [
+    "x86_64",
+    "arm64"
+  ],
+  "build_host_architecture": "x86_64",
+  "minimum_macos": "11.0",
+  "archive": "Point-and-Tell-v0.1.0-macOS-universal.zip",
+  "sha256": "bf65f98e87f0f39db47f490f5d8ea7e53240054395d52dfd1b0183c12ab10107",
+  "bytes": 746283,
+  "signature": "ad-hoc; codesign --verify --strict passed",
+  "notarized": false,
+  "ci_run_url": "https://github.com/kejun/point-and-tell/actions/runs/36952515792",
+  "unverified": [
+    "macOS 11 device runtime",
+    "screen and microphone permissions",
+    "real billed ASR request",
+    "10-minute Intel/8GB performance"
+  ],
+  "verification": {
+    "native_x86_64": {
+      "tests": 72,
+      "failures": 0,
+      "audio_extraction_smoke": "passed",
+      "review_ui_smoke": "passed",
+      "job_id": 110668320205
+    },
+    "native_arm64": {
+      "tests": 72,
+      "failures": 0,
+      "audio_extraction_smoke": "passed",
+      "review_ui_smoke": "passed",
+      "job_id": 110668320298
+    },
+    "local_archive_validation": "ZIP CRC, executable mode, Info.plist version, x86_64 and arm64 Mach-O slices, minimum macOS 11.0 and signature load commands verified"
+  }
+}
