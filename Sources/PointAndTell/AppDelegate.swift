@@ -239,7 +239,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                         case .success(let report):
                             self.project?.captureState = .complete
                             if self.project?.reviewCards.isEmpty == true {
-                                self.project?.reviewCards = self.project?.anchors.map { ReviewCard(text: "", frameIDs: [$0.id], startSeconds: $0.timestamp, endSeconds: $0.timestamp) } ?? []
+                                let placeholders = self.project?.anchors.map { ReviewCard(text: "", frameIDs: [$0.id], startSeconds: $0.timestamp, endSeconds: $0.timestamp) } ?? []
+                                self.project?.reviewCards = placeholders
                             }
                             do { try self.persist() } catch { self.fail(error) }
                             let message = report.suspectedSilence
