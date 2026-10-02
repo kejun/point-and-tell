@@ -1,0 +1,31 @@
+name: macOS Intel build and tests
+on:
+  push:
+    branches: [main, 'codex/**']
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
+jobs:
+  build:
+    runs-on: macos-15-intel
+    timeout-minutes: 20
+    env:
+      MACOSX_DEPLOYMENT_TARGET: '11.0'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: swift --version && xcodebuild -version
+      - name: Test pure core
+        run: swift test
+      - name: Build Intel macOS 11 app
+        run: ARCH=x86_64 scripts/build-app.sh
+      - name: Upload ad-hoc signed app
+        uses: actions/upload-artifact@v4
+        with:
+          name: Point-and-Tell-macOS-x86_64
+          path: |
+            dist/Point-and-Tell-macOS-x86_64.zip
+            dist/Point-and-Tell-macOS-x86_64.zip.sha256
+          if-no-files-found: error
+          retention-days: 30
