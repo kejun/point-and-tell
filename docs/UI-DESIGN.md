@@ -26,3 +26,19 @@ Text saves to the local project as it changes. Timing drafts are validated and c
 ## Verification
 
 The macOS CI matrix compiles both architectures, runs the existing core/audio checks, packages a signed Universal app and renders native UI fixtures. `--smoke-test` captures light review, compact dark review, empty project and welcome screens, and checks text persistence, timing commits, empty previews and busy-state availability. These are app view renders, not desktop captures. They do not replace real-device recording permission, keyboard/VoiceOver or minimum-OS usability checks.
+
+## Native screenshots
+
+Rendered by the actual AppKit application on the macOS CI runner ([source build](https://github.com/kejun/point-and-tell/actions/runs/36968091570)). The example recording image is a synthetic fixture; no private screen, microphone or API data is used. The runner's display constrains these captures to 680pt content height.
+
+### Welcome
+
+![Welcome](screenshots/welcome.png)
+
+### Review
+
+![Review](screenshots/review-light.png)
+
+### Dark / compact
+
+![Dark review](screenshots/review-dark.png)

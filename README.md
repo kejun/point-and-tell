@@ -4,29 +4,31 @@
 
 Record your screen while explaining what should change. Mark the important moments, draw on a frozen screenshot, then turn your explanation into editable text-and-image cards and an offline HTML file.
 
-**Source preview: v0.2.0** · redesigned native workspace. The downloadable release below remains v0.1.1 until a verified v0.2.0 archive is published. See [UI design](docs/UI-DESIGN.md).
+**New in v0.2.0:** a native sidebar workspace, clearer card editing and the new app icon. See [UI design and screenshots](docs/UI-DESIGN.md).
 
-**Native macOS 11+, Intel + Apple Silicon. Preview v0.1.1.** No Electron, local language model, account, server, or database.
+![Native review workspace](docs/screenshots/review-light.png)
+
+**Native macOS 11+, Intel + Apple Silicon. Preview v0.2.0.** No Electron, local language model, account, server, or database.
 
 ## Get the app
 
-[Download v0.1.1 Universal](releases/v0.1.1/Point-and-Tell-v0.1.1-macOS-universal.zip?raw=true) for Intel and Apple Silicon. The application ZIP, SHA-256 checksum and exact source/build manifest are committed under [releases/v0.1.1](releases/v0.1.1). See the [release notes](releases/README.md) for verification and rollback details.
+[Download v0.2.0 Universal](releases/v0.2.0/Point-and-Tell-v0.2.0-macOS-universal.zip?raw=true) for Intel and Apple Silicon. The application ZIP, SHA-256 checksum and exact source/build manifest are committed under [releases/v0.2.0](releases/v0.2.0). See the [release notes](releases/README.md) for verification and rollback details.
 
 The app is ad-hoc signed, **not Apple-notarized**. On macOS 11, extract the ZIP, move the app to Applications, then use Finder → right-click → Open if Gatekeeper asks. Do not disable system security. No Apple Developer account is required to build locally.
 
 ## Use
 
-1. Select one screen, 5 fps (default) or 10 fps, and a microphone. **系统默认** is resolved again when recording starts; choose a named built-in/external mic if the default is wrong. **刷新设备** updates the list. Click **新建并开始录制** and choose a new local `.pointtell` project folder
+1. Select one screen, 5 fps (default) or 10 fps, and a microphone. **系统默认** is resolved again when recording starts; choose a named built-in/external mic if the default is wrong. **刷新** updates the list. Click **新建录制** and choose a new local `.pointtell` project folder
 2. Grant Screen Recording and Microphone permission in System Preferences → Security & Privacy → Privacy; quit and reopen if macOS requests it
 3. Speak normally and check the live microphone name/level in the floating toolbar. A flat or very low meter means you should check the selected input and macOS Sound → Input volume before continuing. **标记** (Control–Option–M) saves a screenshot with the pointer highlighted. **画笔** freezes the current screenshot for drawing while voice continues; undo/clear, then save and continue
-4. Stop and wait for the local audio-track/decode check. Use **本地试听录屏** to confirm your speech is audible. Original MOV, PNG screenshots and the project manifest remain local
-5. Optionally enter an Alibaba Cloud API key and choose **转写 / 重试失败片段**. The app asks before uploading audio; only microphone audio is sent, in sequential ~3-minute chunks. Video and screenshots are never sent to the ASR service. The API key stays in memory only
+4. Stop and wait for the local audio-track/decode check. Use **试听录屏** to confirm your speech is audible. Original MOV, PNG screenshots and the project manifest remain local
+5. Optionally enter an Alibaba Cloud API key and choose **开始转写** (or **继续 / 重试转写**). The app asks before uploading audio; only microphone audio is sent, in sequential ~3-minute chunks. Video and screenshots are never sent to the ASR service. The API key stays in memory only
 6. Review cards: edit text, save timing changes, select/add/remove screenshots, or extract a frame at a specified movie time. Untimed results are explicitly left for manual alignment
 7. Export self-contained **HTML**, or **PNG + Markdown + JSON** for tools that ingest image attachments more reliably. An HTML upload alone does not guarantee that a model will inspect embedded images
 
 ## If audio or transcription fails
 
-1. Record a disposable 10-second test: say a few words, mark once, stop and use **本地试听录屏**. No API key or network request is needed
+1. Record a disposable 10-second test: say a few words, mark once, stop and use **试听录屏**. No API key or network request is needed
 2. If the live meter stays flat or playback is silent, select the built-in mic explicitly, check Microphone permission and macOS Sound → Input. Disconnect/reselect unavailable Bluetooth/USB inputs. The app never silently swaps a missing explicitly selected device
 3. A missing/undecodable/empty audio track blocks transcription. A very low RMS level is only a warning, not proof of silence or a speech detector; after listening you can explicitly continue sending low-level audio for that transcription attempt
 4. If local speech is audible but transcription fails, read the stage: source inspection, WAV extraction/inspection, request validation, transport, HTTP/provider, or response parsing. Safe HTTP status, provider code and request ID help distinguish service rejection without exposing a key or raw response
