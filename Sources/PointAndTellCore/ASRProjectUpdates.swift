@@ -24,6 +24,18 @@ public extension ProjectManifest {
             }
             return segment
         }
+        // If a deleted sentence's boundary/text changed, its new identity cannot
+        // be matched safely. Suppress unmatched replacements in that same chunk
+        // rather than silently restoring content the user removed. Matched other
+        // sentences and completely new chunks remain eligible for suggestions.
+        let suppressed = Set(reviewEdits?.suppressedTranscriptIDs ?? [])
+        if previous.contains(where: { suppressed.contains($0.id) && !used.contains($0.id) }) {
+            let oldIDs = Set(previous.map(\.id))
+            for replacement in replacements where !oldIDs.contains(replacement.id)
+                && !suppressed.contains(replacement.id) {
+                reviewEdits?.suppressedTranscriptIDs.append(replacement.id)
+            }
+        }
         reviewCards = reviewCards.compactMap { original -> ReviewCard? in
             guard let old = previous.first(where: { $0.id == original.transcriptID }) else { return original }
             let unchanged = original.text == old.text && original.startSeconds == old.startSeconds

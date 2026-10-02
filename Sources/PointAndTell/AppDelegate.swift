@@ -33,6 +33,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private let stepLabel = NSTextField(labelWithString: "01  录制讲解     →     02  转写与整理     →     03  导出分享")
     private var exportHTMLButton: NSButton!
     private var exportBundleButton: NSButton!
+    private var deleteCardButton: NSButton!
     private let cardCount = NSTextField(labelWithString: "讲解卡片")
     private let savedLabel = NSTextField(labelWithString: "文字自动保存")
     private let attachmentLabel = InterfaceStyle.text("尚未配图", size: 11, color: .secondaryLabelColor)
@@ -220,6 +221,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     self.window.makeKeyAndOrderFront(nil); self.window.makeFirstResponder(self.table)
                     try render("window", width: 1080, height: 760)
                     try render("review-dark-compact", width: 980, height: 680, dark: true)
+                    try self.verifyCardDeletion(store: demoStore)
+                    try render("card-deleted", width: 1080, height: 760)
+                    self.project = demo; self.editingCardID = nil; self.refresh()
                     self.project?.asrChunks = [ASRChunk(relativePath: "audio/legacy.wav", startSeconds: 0,
                         durationSeconds: 10, state: .complete, sentences: [TranscriptSegment(text: "旧的无时间戳结果")])]
                     self.updateInterface()
@@ -304,6 +308,39 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                 } catch { fputs("UI smoke render failed: \(error.localizedDescription)\n", stderr); exit(4) }
             }
         } catch { fputs("UI smoke fixture failed\n", stderr); exit(1) }
+    }
+
+    private func verifyCardDeletion(store: ProjectStore) throws {
+        guard var fixture = project else { exit(32) }
+        fixture.reviewCards.append(ReviewCard(text: "第三张卡片"))
+        project = fixture; editingCardID = fixture.reviewCards[1].id; refresh()
+        let selected = fixture.reviewCards[1].id
+        guard deleteCardButton.isEnabled else { exit(33) }
+        setBusy(true)
+        try removeReviewCard(id: selected)
+        guard !deleteCardButton.isEnabled, project == fixture else { exit(34) }
+        setBusy(false)
+
+        // A real failed filesystem write must not remove the card in memory.
+        self.store = ProjectStore(folderURL: store.folderURL.appendingPathComponent("frames/demo.png"))
+        do { try removeReviewCard(id: selected); exit(35) }
+        catch { guard project == fixture, editingCardID == selected else { exit(36) } }
+        self.store = store
+        startField.stringValue = "invalid timing draft"; timingDirty = true
+        try removeReviewCard(id: selected)
+        guard project?.reviewCards.count == 2, table.numberOfRows == 2,
+              editingCardID == fixture.reviewCards[2].id, !timingDirty,
+              try store.load().reviewCards == project?.reviewCards else { exit(37) }
+        let remaining = project!
+        try removeReviewCard(id: fixture.reviewCards[2].id)
+        guard editingCardID == fixture.reviewCards[0].id else { exit(38) }
+        try removeReviewCard(id: fixture.reviewCards[0].id)
+        guard table.numberOfRows == 0, editingCardID == nil,
+              !deleteCardButton.isEnabled, !exportHTMLButton.isEnabled,
+              !emptyContainer.isHidden, try store.load().reviewCards.isEmpty else { exit(39) }
+        project = remaining; editingCardID = remaining.reviewCards.last?.id
+        try persist(); refresh()
+        print("CARD_DELETION_SMOKE_OK · middle/last/all, selection, save/reopen, busy guard, failed-write rollback")
     }
 
     /// Exercises onboarding without asking for real OS permission, writing a
@@ -406,6 +443,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         edit.addItem(withTitle: "复制", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         edit.addItem(withTitle: "粘贴", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
         edit.addItem(withTitle: "全选", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        edit.addItem(.separator())
+        edit.addItem(withTitle: "删除所选卡片…", action: #selector(deleteCard), keyEquivalent: "").target = self
         editItem.submenu = edit; NSApp.mainMenu = menu
     }
     private func makeWindow() {
@@ -505,9 +544,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         let tableScroll = NSScrollView(); tableScroll.documentView = table; tableScroll.hasVerticalScroller = true
         tableScroll.drawsBackground = false
         let add = button("添加", #selector(addCard), idleOnly: true); add.controlSize = .small; decorate(add, symbol: "plus")
+        deleteCardButton = button("删除", #selector(deleteCard), idleOnly: true)
+        deleteCardButton.controlSize = .small; decorate(deleteCardButton, symbol: "trash")
+        deleteCardButton.toolTip = "删除所选卡片及其导出内容；原录屏和截图仍保留。"
+        deleteCardButton.setAccessibilityLabel("删除所选卡片")
         cardCount.font = .systemFont(ofSize: 12, weight: .semibold)
-        let listHeader = row([cardCount, InterfaceStyle.spacer(), add])
-        let list = InterfaceStyle.column([listHeader, tableScroll], spacing: 12)
+        let listHeader = row([cardCount, InterfaceStyle.spacer()])
+        let cardActions = row([add, deleteCardButton!, InterfaceStyle.spacer()])
+        let list = InterfaceStyle.column([listHeader, cardActions, tableScroll], spacing: 8)
         list.widthAnchor.constraint(equalToConstant: 190).isActive = true
         let listSurface = SurfaceView(); InterfaceStyle.pin(list, to: listSurface, inset: 12)
         listSurface.widthAnchor.constraint(equalToConstant: 214).isActive = true
@@ -612,11 +656,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         row([InterfaceStyle.symbol(symbol, size: 14), InterfaceStyle.text(text, size: 12, weight: .semibold)])
     }
     private func decorate(_ button: NSButton, symbol: String, primary: Bool = false) {
+        if primary {
+            let title = button.title, target = button.target, action = button.action
+            let cell = PrimaryButtonCell(textCell: title)
+            cell.setButtonType(.momentaryPushIn)
+            button.cell = cell; button.target = target; button.action = action
+        }
         button.bezelStyle = .rounded; button.imagePosition = .imageLeading
         if button.controlSize != .small { button.controlSize = .large }
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
         button.font = .systemFont(ofSize: primary ? 13 : 12, weight: primary ? .semibold : .regular)
-        if primary { button.bezelColor = NSColor(calibratedRed: 0.06, green: 0.36, blue: 0.31, alpha: 1); button.contentTintColor = .white }
+        if primary { button.contentTintColor = .white }
         button.setAccessibilityLabel(button.title)
     }
     private func makeToolbar() {
@@ -654,8 +704,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         case #selector(startRecording), #selector(openProject), #selector(refreshMicrophones): return true
         case #selector(revealProject), #selector(addCard): return project != nil
         case #selector(playRecording), #selector(transcribe): return project?.recording != nil && !recordingNeverStarted
-        case #selector(exportHTML), #selector(exportBundle): return !(project?.reviewCards.isEmpty ?? true) || !(project?.transcripts.isEmpty ?? true)
-        case #selector(saveCard): return cardIndex != nil
+        case #selector(exportHTML), #selector(exportBundle): return project?.hasExportableCards == true
+        case #selector(saveCard), #selector(deleteCard): return cardIndex != nil
         case #selector(clearFrames): return cardIndex.map { !(project?.reviewCards[$0].frameIDs.isEmpty ?? true) } ?? false
         case #selector(selectFrame): return cardIndex != nil && framePicker.selectedItem != nil
         case #selector(extractManualFrame): return cardIndex != nil && project?.recording != nil
@@ -689,6 +739,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         reviewContent.isHidden = count == 0; emptyContainer.isHidden = count > 0
         emptyTitle.stringValue = project == nil ? "指向画面，说出想法" : (recordingNeverStarted ? "录制未能开始" : "录制已就位，开始整理")
         emptyDescription.stringValue = project == nil ? "录制时标记重点、圈画截图。\n结束后，把口述变成清晰的图文反馈。" : (recordingNeverStarted ? "请根据错误提示检查后，重新新建录制。\n本次项目与已写入的文件保留，未启动自动转写。" : "录制结束后自动转写。若未完成，可从左侧继续或重试。\n原始录屏始终保留，也可手动整理。")
+        if count == 0, project?.reviewEdits != nil, !recordingNeverStarted {
+            emptyTitle.stringValue = "卡片已全部删除"
+            emptyDescription.stringValue = "可以添加新卡片，继续整理讲解内容。\n删除结果已保存，导出时不会重新生成已删除的卡片。"
+        }
         emptyAction.title = project == nil ? "开始第一次录制" : (recordingNeverStarted ? "重新新建录制" : "添加第一张卡片")
         emptyAction.action = project == nil || recordingNeverStarted ? #selector(startRecording) : #selector(addCard)
         emptyAction.setAccessibilityLabel(emptyAction.title)
@@ -1080,10 +1134,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         automaticTranscription = false
         let completed = project?.asrChunks.sorted(by: { $0.index < $1.index }).flatMap { $0.sentences } ?? []
         project?.transcripts = completed
-        let existing = Set(project?.reviewCards.compactMap { $0.transcriptID } ?? [])
-        let partialCards = FrameMatcher.suggestCards(for: completed.filter { !existing.contains($0.id) }, anchors: project?.anchors ?? [])
-        project?.reviewCards.append(contentsOf: partialCards)
-        project?.groupReviewCards()
+        project?.appendSuggestedReviewCards(for: completed)
         if project?.captureState == .processing { project?.captureState = captureStateBeforeASR ?? .complete }
         try? persist(); cancelASRButton.isEnabled = false; setBusy(false, status: cancelled ? "转写已取消。已完成的片段保留，下次会继续未完成片段。" : "转写处理已停止。请检查片段状态；重试只发送未完成或失败的片段。"); refresh()
     }
@@ -1119,11 +1170,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                 guard let self = self else { return }; self.project?.anchors.append(contentsOf: added)
                 if self.cancelRequested { self.finishASR(cancelled: true); return }
                 // Keep existing user-reviewed cards on retry; only append newly transcribed segments.
-                let existing = Set(self.project?.reviewCards.compactMap { $0.transcriptID } ?? [])
-                let suggested = FrameMatcher.suggestCards(for: segments.filter { !existing.contains($0.id) }, anchors: self.project?.anchors ?? [])
                 self.project?.reviewCards.removeAll { $0.transcriptID == nil && $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                self.project?.reviewCards.append(contentsOf: suggested)
-                self.project?.groupReviewCards()
+                self.project?.appendSuggestedReviewCards(for: segments)
                 self.project?.captureState = self.captureStateBeforeASR ?? .complete; do { try self.persist() } catch { self.fail(error) }
                 self.automaticTranscription = false
                 self.cancelASRButton.isEnabled = false; self.setBusy(false, status: warning.map { "转写完成，但部分截图失败：\($0)。请手动取图后导出。" } ?? "转写与配图已准备好。请校对文字、时间和图片，再导出。无时间戳的句子需要手动配图。")
@@ -1197,6 +1245,30 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         let card = ReviewCard(text: ""); project?.reviewCards.append(card)
         do { try persist(); editingCardID = card.id; refresh(); window.makeFirstResponder(transcriptEditor) } catch { fail(error) }
     }
+    @objc private func deleteCard() {
+        guard !busy, !recorder.isBusy, let index = cardIndex,
+              let card = project?.reviewCards[index] else { return }
+        let alert = NSAlert()
+        alert.messageText = "删除第 \(index + 1) 张卡片？"
+        alert.informativeText = "这张卡片的文字和配图将从整理结果及导出内容中移除。原录屏、转写原文和截图文件仍保留。"
+        alert.addButton(withTitle: "删除卡片")
+        alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        do { try removeReviewCard(id: card.id) } catch { fail(error) }
+    }
+
+    /// Save a copy first: a failed write must leave the selected card and edits
+    /// on screen. Deleting also discards that card's unsaved timing draft.
+    private func removeReviewCard(id: UUID) throws {
+        guard !busy, !recorder.isBusy, let store = store, var updated = project,
+              let index = updated.reviewCards.firstIndex(where: { $0.id == id }),
+              updated.deleteReviewCard(id: id) else { return }
+        try store.save(updated)
+        project = updated; timingDirty = false
+        editingCardID = updated.reviewCards.isEmpty ? nil : updated.reviewCards[min(index, updated.reviewCards.count - 1)].id
+        refresh()
+        report("卡片已删除并保存。")
+    }
     private func refreshFramePicker() {
         framePicker.removeAllItems()
         for anchor in project?.anchors ?? [] {
@@ -1247,7 +1319,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     @objc private func exportBundle() { export(bundle: true) }
     private func export(bundle: Bool) {
         guard !busy, commitTiming(), let project = project, let store = store else { return }
-        guard !project.reviewCards.isEmpty || !project.transcripts.isEmpty else { report("请先转写或添加讲解卡片，再导出。"); return }
+        guard project.hasExportableCards else { report("请先转写或添加讲解卡片，再导出。"); return }
         let panel = NSSavePanel(); panel.title = bundle ? "保存图片与 Markdown 文件夹" : "保存独立 HTML"; panel.nameFieldStringValue = bundle ? "Point-and-Tell-export" : "Point-and-Tell.html"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         setBusy(true, status: "正在本地生成导出文件…")
