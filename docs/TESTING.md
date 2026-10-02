@@ -4,7 +4,7 @@
 
 `swift test` covers ASR schema, WAV guards/chunking, JSON/SSE finalization, cancellation, missing timing, exact offset addition, frame priority/multiple frames, persistence recovery, path traversal/symlinks, malformed files, Unicode/HTML escaping and self-contained exports. Network calls use stubs; no API key or billed request is required.
 
-`ARCH=x86_64 scripts/build-app.sh` builds a release `.app`, ad-hoc signs it, checks the signature and Mach-O minimum OS/architecture, then packages a ZIP. GitHub Actions uses macos-15-intel. Additional native smoke checks decode a streamed 181-second PCM fixture into 180s + 1s chunks, verify safe retry, and render a deterministic AppKit review-window PNG without accessing the screen, microphone, or network. A successful build on macOS 15 is not a runtime test on macOS 11.
+`ARCH=universal scripts/build-app.sh` builds a release `.app`, ad-hoc signs it, checks the signature and both Mach-O slices’ minimum OS/architectures, then packages a ZIP. GitHub Actions uses macos-15-intel (x86_64) and macos-15 (arm64), compiling both slices and running tests natively on each architecture. Additional native smoke checks decode a streamed 181-second PCM fixture into 180s + 1s chunks, verify safe retry, and render a deterministic AppKit review-window PNG without accessing the screen, microphone, or network. A successful build on macOS 15 is not a runtime test on macOS 11.
 
 ## Required device checks (not claimed tested)
 

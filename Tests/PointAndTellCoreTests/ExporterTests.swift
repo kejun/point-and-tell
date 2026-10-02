@@ -87,6 +87,7 @@ final class ExporterTests: XCTestCase {
         XCTAssertEqual(result.warnings.count, 2)
         let html = try String(contentsOf: destination)
         XCTAssertTrue(html.contains("Image unavailable (2)"))
+        XCTAssertFalse(html.contains("No screenshot selected"))
         XCTAssertFalse(html.contains("data:image/png"))
     }
 
@@ -153,9 +154,27 @@ final class ExporterTests: XCTestCase {
         source.reviewCards = []
         source.transcripts = [TranscriptSegment(text: "No provider timing")]
         let destination = root.appendingPathComponent("untimed.html")
-        _ = try ProjectExporter.exportHTML(project: source, store: store, to: destination)
+        let result = try ProjectExporter.exportHTML(project: source, store: store, to: destination)
         let html = try String(contentsOf: destination)
         XCTAssertTrue(html.contains("Untimed transcript"))
+        XCTAssertTrue(html.contains("No screenshot selected"))
+        XCTAssertEqual(result.warnings, ["Card 1: No screenshot selected."])
+        XCTAssertFalse(html.contains("data:image/png"))
+    }
+
+    func testUnselectedScreenshotsAreExplicitForTimedAndManualCardsInBundle() throws {
+        var source = try project()
+        source.reviewCards = [ReviewCard(text: "Timed but no image", startSeconds: 1, endSeconds: 2),
+                              ReviewCard(text: "Manual untimed card")]
+        let destination = root.appendingPathComponent("unselected-bundle")
+        let result = try ProjectExporter.exportBundle(project: source, store: store, to: destination)
+        XCTAssertEqual(result.warnings, ["Card 1: No screenshot selected.", "Card 2: No screenshot selected."])
+        let html = try String(contentsOf: destination.appendingPathComponent("index.html"))
+        let markdown = try String(contentsOf: destination.appendingPathComponent("README.md"))
+        for document in [html, markdown] {
+            XCTAssertEqual(document.components(separatedBy: "No screenshot selected").count - 1, 2)
+            XCTAssertFalse(document.contains("Image unavailable"))
+        }
         XCTAssertFalse(html.contains("data:image/png"))
     }
 

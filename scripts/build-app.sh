@@ -5,12 +5,25 @@ VERSION="$(tr -d '[:space:]' < VERSION)"
 PLIST_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
 [[ "$VERSION" == "$PLIST_VERSION" ]] || { echo "Version mismatch" >&2; exit 1; }
 export MACOSX_DEPLOYMENT_TARGET=11.0
-ARCH="${ARCH:-x86_64}"
-swift build -c release --arch "$ARCH"
-BIN_DIR="$(swift build -c release --arch "$ARCH" --show-bin-path)"
+ARCH="${ARCH:-universal}"
+case "$ARCH" in
+  universal) SLICES="x86_64 arm64" ;;
+  x86_64|arm64) SLICES="$ARCH" ;;
+  *) echo "Unsupported architecture: $ARCH" >&2; exit 1 ;;
+esac
+BINARIES=()
+for SLICE in $SLICES; do
+  swift build -c release --arch "$SLICE"
+  BIN_DIR="$(swift build -c release --arch "$SLICE" --show-bin-path)"
+  BINARIES+=("$BIN_DIR/PointAndTell")
+done
 APP="dist/Point & Tell.app"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$BIN_DIR/PointAndTell" "$APP/Contents/MacOS/PointAndTell"
+if [[ "$ARCH" == "universal" ]]; then
+  xcrun lipo -create "${BINARIES[@]}" -output "$APP/Contents/MacOS/PointAndTell"
+else
+  cp "${BINARIES[0]}" "$APP/Contents/MacOS/PointAndTell"
+fi
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 chmod +x "$APP/Contents/MacOS/PointAndTell"
 # Ad-hoc signature, no Developer ID or notarization credentials.
@@ -21,12 +34,15 @@ otool -l "$APP/Contents/MacOS/PointAndTell" | grep -A5 LC_BUILD_VERSION
 /usr/bin/ditto -c -k --sequesterRsrc --keepParent "$APP" "dist/Point-and-Tell-v${VERSION}-macOS-${ARCH}.zip"
 shasum -a 256 "dist/Point-and-Tell-v${VERSION}-macOS-${ARCH}.zip" > "dist/Point-and-Tell-v${VERSION}-macOS-${ARCH}.zip.sha256"
 
-[[ "$(lipo -archs "$APP/Contents/MacOS/PointAndTell")" == "$ARCH" ]] || { echo "Wrong architecture" >&2; exit 1; }
-MIN_OS="$(otool -l "$APP/Contents/MacOS/PointAndTell" | awk '$1 == "minos" { print $2; exit }')"
-[[ "$MIN_OS" == "11.0" ]] || { echo "Wrong minimum macOS: $MIN_OS" >&2; exit 1; }
-export VERSION ARCH MIN_OS
+ACTUAL_SLICES="$(lipo -archs "$APP/Contents/MacOS/PointAndTell")"
+[[ "$ACTUAL_SLICES" == "$SLICES" ]] || { echo "Wrong architectures: $ACTUAL_SLICES" >&2; exit 1; }
+for SLICE in $SLICES; do
+  MIN_OS="$(otool -arch "$SLICE" -l "$APP/Contents/MacOS/PointAndTell" | awk '$1 == "minos" { print $2; exit }')"
+  [[ "$MIN_OS" == "11.0" ]] || { echo "Wrong minimum macOS for $SLICE: $MIN_OS" >&2; exit 1; }
+done
+export VERSION ARCH MIN_OS SLICES
 python3 - <<'PYBUILD'
-import hashlib,json,os,pathlib,subprocess,zipfile
+import hashlib,json,os,pathlib,platform,subprocess,zipfile
 p=pathlib.Path(f"dist/Point-and-Tell-v{os.environ['VERSION']}-macOS-{os.environ['ARCH']}.zip")
 with zipfile.ZipFile(p) as z:
     executable=z.getinfo('Point & Tell.app/Contents/MacOS/PointAndTell')
@@ -35,7 +51,7 @@ with zipfile.ZipFile(p) as z:
 manifest={
  'version':os.environ['VERSION'],
  'source_commit':os.environ.get('SOURCE_COMMIT') or subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
- 'architecture':os.environ['ARCH'], 'minimum_macos':os.environ['MIN_OS'],
+ 'architecture':os.environ['ARCH'], 'slices':os.environ['SLICES'].split(), 'build_host_architecture':platform.machine(), 'minimum_macos':os.environ['MIN_OS'],
  'archive':p.name, 'sha256':hashlib.sha256(p.read_bytes()).hexdigest(), 'bytes':p.stat().st_size,
  'signature':'ad-hoc; codesign --verify --strict passed', 'notarized':False,
  'ci_run_url':f"https://github.com/{os.environ.get('GITHUB_REPOSITORY','kejun/point-and-tell')}/actions/runs/{os.environ.get('GITHUB_RUN_ID','local')}",

@@ -1,4 +1,4 @@
-name: macOS Intel build and tests
+name: macOS Universal build and native tests
 on:
   push:
     branches: [main]
@@ -8,7 +8,16 @@ permissions:
   contents: read
 jobs:
   build:
-    runs-on: macos-15-intel
+    name: Native ${{ matrix.arch }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-15-intel
+            arch: x86_64
+          - os: macos-15
+            arch: arm64
+    runs-on: ${{ matrix.os }}
     timeout-minutes: 20
     env:
       MACOSX_DEPLOYMENT_TARGET: '11.0'
@@ -19,12 +28,12 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Toolchain
-        run: swift --version && xcodebuild -version
+        run: swift --version && xcodebuild -version && test "$(uname -m)" = "${{ matrix.arch }}"
       - name: Test pure core
         timeout-minutes: 5
-        run: swift test
-      - name: Build Intel macOS 11 app
-        run: ARCH=x86_64 scripts/build-app.sh
+        run: swift test --arch ${{ matrix.arch }}
+      - name: Build Universal macOS 11 app
+        run: ARCH=universal scripts/build-app.sh
       - name: Verify native PCM extraction
         timeout-minutes: 2
         run: '"dist/Point & Tell.app/Contents/MacOS/PointAndTell" --audio-smoke-test "$PWD/dist/audio-smoke"'
@@ -34,10 +43,10 @@ jobs:
       - name: Upload ad-hoc signed app
         uses: actions/upload-artifact@v4
         with:
-          name: Point-and-Tell-macOS-x86_64
+          name: Point-and-Tell-universal-built-on-${{ matrix.arch }}
           path: |
-            dist/Point-and-Tell-v*-macOS-x86_64.zip
-            dist/Point-and-Tell-v*-macOS-x86_64.zip.sha256
+            dist/Point-and-Tell-v*-macOS-universal.zip
+            dist/Point-and-Tell-v*-macOS-universal.zip.sha256
             dist/build.json
           if-no-files-found: error
           retention-days: 30
@@ -45,6 +54,6 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: UI-smoke-evidence
+          name: UI-smoke-evidence-${{ matrix.arch }}
           path: dist/ui-smoke/window.png
           if-no-files-found: ignore

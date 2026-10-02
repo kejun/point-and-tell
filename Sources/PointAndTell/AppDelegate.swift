@@ -406,6 +406,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     @objc private func exportBundle() { export(bundle: true) }
     private func export(bundle: Bool) {
         guard let project = project, let store = store else { return }
+        guard !project.reviewCards.isEmpty || !project.transcripts.isEmpty else { report("请先转写或添加讲解卡片，再导出。"); return }
         let panel = NSSavePanel(); panel.title = bundle ? "保存图片与 Markdown 文件夹" : "保存独立 HTML"; panel.nameFieldStringValue = bundle ? "Point-and-Tell-export" : "Point-and-Tell.html"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         setBusy(true, status: "正在本地生成导出文件…")

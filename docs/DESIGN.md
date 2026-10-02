@@ -2,7 +2,7 @@
 
 ## Constraints
 
-macOS 11+, Intel x86_64 first, 8 GB RAM. Swift + AppKit + AVFoundation, no external dependencies. Source capture uses AVCaptureScreenInput and AVCaptureDeviceInput into a single AVCaptureMovieFileOutput with H.264/AAC. Video is source-scaled to fit 1920×1080, keeps aspect ratio, 5 fps default / 10 fps optional. Encoder hardware preference is supplied only when supported; system fallback is permitted. Hardware use is not measured or claimed.
+macOS 11+, Universal x86_64 + arm64, 8 GB RAM. Swift + AppKit + AVFoundation, no external dependencies. Source capture uses AVCaptureScreenInput and AVCaptureDeviceInput into a single AVCaptureMovieFileOutput with H.264/AAC. Video is source-scaled to fit 1920×1080, keeps aspect ratio, 5 fps default / 10 fps optional. Encoder hardware preference is supplied only when supported; system fallback is permitted. Hardware use is not measured or claimed.
 
 The movie output streams to disk with two-second fragments and a 128 MB finalization reserve. A 256 MB free-space preflight prevents starting nearly full. Neither frames nor the entire recording accumulate in RAM. A serial state machine rejects concurrent starts and completes repeated stops consistently. Device/sleep/runtime interruption and start/finish watchdogs preserve partial files; recovery still needs real-device testing.
 

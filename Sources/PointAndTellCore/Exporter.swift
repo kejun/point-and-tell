@@ -134,6 +134,9 @@ public enum ProjectExporter {
         for (index, card) in cards.enumerated() {
             try textBudget(card.text)
             try addHTMLBudget(1_024)
+            if card.frameIDs.isEmpty {
+                warnings.append("Card \(index + 1): No screenshot selected.")
+            }
             var images: [ExportImage] = []
             var missing = 0
             var seen = Set<UUID>()
@@ -191,8 +194,10 @@ public enum ProjectExporter {
                 return "<figure><img src=\"data:image/png;base64,\(bytes.base64EncodedString())\" alt=\"Screenshot for card \(index + 1)\"><figcaption>\(escapeHTML(timeLabel(image.timestampSeconds))) · \(image.kind.rawValue)</figcaption></figure>"
             }.joined(separator: "\n")
             let missing = card.missingImageCount > 0 ? "<p class=\"notice\">Image unavailable (\(card.missingImageCount))</p>" : ""
+            let unselected = card.images.isEmpty && card.missingImageCount == 0
+                ? "<p class=\"notice\">No screenshot selected</p>" : ""
             let timing = timingLabel(card)
-            return "<section class=\"card\"><h2>\(index + 1)</h2><p class=\"time\">\(escapeHTML(timing))</p><p class=\"transcript\">\(escapeHTML(card.text))</p>\(figures)\(missing)</section>"
+            return "<section class=\"card\"><h2>\(index + 1)</h2><p class=\"time\">\(escapeHTML(timing))</p><p class=\"transcript\">\(escapeHTML(card.text))</p>\(figures)\(missing)\(unselected)</section>"
         }.joined(separator: "\n")
         return """
         <!doctype html>
@@ -252,6 +257,7 @@ public enum ProjectExporter {
                 output += "![Screenshot for card \(index + 1)](\(image.relativePath))\n\n"
             }
             if card.missingImageCount > 0 { output += "Image unavailable (\(card.missingImageCount))\n\n" }
+            if card.images.isEmpty && card.missingImageCount == 0 { output += "No screenshot selected\n\n" }
         }
         return output
     }
