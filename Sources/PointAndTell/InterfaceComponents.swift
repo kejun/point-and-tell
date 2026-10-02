@@ -4,6 +4,7 @@ import AppKit
 /// Small AppKit primitives shared by the workspace. Semantic colors resolve in
 /// the view's current appearance; no fixed light-mode layer backgrounds.
 enum InterfaceStyle {
+    static let primaryFill = NSColor(calibratedRed: 0.06, green: 0.36, blue: 0.31, alpha: 1)
     static var accent: NSColor {
         NSColor(name: nil) { appearance in
             appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua
@@ -50,6 +51,42 @@ enum InterfaceStyle {
             child.topAnchor.constraint(equalTo: parent.topAnchor, constant: inset),
             child.bottomAnchor.constraint(equalTo: parent.bottomAnchor, constant: -inset)
         ])
+    }
+}
+
+/// A native NSButtonCell with a predictable solid brand bezel. AppKit may ignore
+/// bezelColor for rounded buttons on older macOS or inactive windows; drawing
+/// only the bezel/content keeps native action, focus and accessibility behavior.
+final class PrimaryButtonCell: NSButtonCell {
+    override func drawBezel(withFrame frame: NSRect, in controlView: NSView) {
+        let color = isHighlighted
+            ? InterfaceStyle.primaryFill.shadow(withLevel: 0.18) ?? InterfaceStyle.primaryFill
+            : InterfaceStyle.primaryFill
+        color.withAlphaComponent(isEnabled ? 1 : 0.35).setFill()
+        NSBezierPath(roundedRect: frame.insetBy(dx: 1, dy: 1), xRadius: 6, yRadius: 6).fill()
+    }
+
+    override func drawTitle(_ title: NSAttributedString, withFrame frame: NSRect, in controlView: NSView) -> NSRect {
+        let text = NSMutableAttributedString(attributedString: title)
+        text.addAttribute(.foregroundColor, value: NSColor.white.withAlphaComponent(isEnabled ? 1 : 0.65),
+                          range: NSRange(location: 0, length: text.length))
+        return super.drawTitle(text, withFrame: frame, in: controlView)
+    }
+
+    override func drawImage(_ image: NSImage, withFrame frame: NSRect, in controlView: NSView) {
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        // Let AppKit position/scale the symbol using its alignment metrics, then
+        // tint only that isolated drawing. Re-rasterizing a symbol at image.size
+        // loses those metrics and can squash circular icons.
+        context.saveGState()
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        super.drawImage(image, withFrame: frame, in: controlView)
+        context.setBlendMode(.sourceIn)
+        context.setFillColor(NSColor.white.cgColor)
+        context.fill(controlView.bounds)
+        context.setBlendMode(.normal)
+        context.endTransparencyLayer()
+        context.restoreGState()
     }
 }
 

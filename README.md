@@ -4,15 +4,15 @@
 
 Record your screen while explaining what should change. Mark the important moments, draw on a frozen screenshot, then turn your explanation into editable text-and-image cards and an offline HTML file.
 
-**New in v0.3.2:** recording uses the native session preset to negotiate compatible screen/audio formats. Startup errors now retain their failure stage and underlying error codes, with a Chinese dialog, Copy Diagnostics and a local diagnostic file. A failed start shows a retry action and does not trigger transcription. See [startup compatibility and diagnostic limits](docs/RECORDING-STARTUP.md). The [v0.3.1 card, pen and instant screenshot-selection fixes](docs/CARDS-AND-PEN.md) remain included.
+**New in v0.3.3:** delete selected cards from the card list or Edit menu; deletion is saved and respected by exports and transcription retries. New Recording and Export Standalone HTML now have consistent solid brand-color backgrounds with white text/icons. See [card deletion and button behavior](docs/CARD-DELETION.md). The [recording startup fixes](docs/RECORDING-STARTUP.md) and [card/pen fixes](docs/CARDS-AND-PEN.md) remain included.
 
-<img src="docs/screenshots/review-light.png" width=600>
+<img src="docs/screenshots/primary-buttons-light.png" width=600>
 
-**Native macOS 11+, Intel + Apple Silicon. Preview v0.3.2.** No Electron, local language model, account, server, or database.
+**Native macOS 11+, Intel + Apple Silicon. Preview v0.3.3.** No Electron, local language model, account, server, or database.
 
 ## Get the app
 
-[Download v0.3.2 Universal](releases/v0.3.2/Point-and-Tell-v0.3.2-macOS-universal.zip?raw=true) for Intel and Apple Silicon. The application ZIP, SHA-256 checksum and exact source/build manifest are committed under [releases/v0.3.2](releases/v0.3.2). See the [release notes](releases/README.md) for verification and rollback details.
+[Download v0.3.3 Universal](releases/v0.3.3/Point-and-Tell-v0.3.3-macOS-universal.zip?raw=true) for Intel and Apple Silicon. The application ZIP, SHA-256 checksum and exact source/build manifest are committed under [releases/v0.3.3](releases/v0.3.3). See the [release notes](releases/README.md) for verification and rollback details.
 
 The app is ad-hoc signed, **not Apple-notarized**. On macOS 11, extract the ZIP, move the app to Applications, then use Finder → right-click → Open if Gatekeeper asks. Do not disable system security. No Apple Developer account is required to build locally.
 
@@ -22,7 +22,7 @@ The app is ad-hoc signed, **not Apple-notarized**. On macOS 11, extract the ZIP,
 2. Click **完成设置，进入工作区**. If macOS requests a restart after granting screen permission, save your key and reopen the app. Returning launches recheck current permissions and hardware; missing prerequisites reopen setup. API-key format/configuration is checked locally; model access and quota are confirmed by the first real transcription
 3. Choose one screen, 5 or 10 fps, and a microphone; click **新建录制** and choose a new local `.pointtell` folder. The recording toolbar stays above other app windows across desktops and full-screen apps without taking keyboard focus. Check its microphone meter while speaking. Use **标记** (Control–Option–M) or **画笔** for screenshots/annotations
 4. Click **结束录制**. The app saves and checks the recording locally, then automatically extracts audio, transcribes with `qwen-audio-3.0-asr-flash`, and creates timestamp-aligned cards. Video and screenshots stay local. Low/invalid audio pauses automatic processing; listen locally before manually continuing
-5. Review/edit the cards and screenshots. Failed or cancelled requests remain available through **继续 / 重试转写**; legacy results show **重新转写 · 补齐时间戳**. Manual retries request upload consent and may incur charges; successful timed chunks are reused. No background automatic retry occurs
+5. Review/edit the cards and screenshots. To remove a card, select it and click **删除**; the saved deletion is respected by export and retry. Failed or cancelled requests remain available through **继续 / 重试转写**; legacy results show **重新转写 · 补齐时间戳**. Manual retries request upload consent and may incur charges; successful timed chunks are reused. No background automatic retry occurs
 6. Use the directly visible **导出独立 HTML…** or **导出图片 + Markdown…** buttons. Review screenshots before sharing. Update the key or permissions through **权限与转写设置…** (⌘,)
 
 ## If audio or transcription fails

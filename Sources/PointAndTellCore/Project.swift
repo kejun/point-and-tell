@@ -189,6 +189,15 @@ public struct ASRChunk: Codable, Equatable, Identifiable, Sendable {
     }
 }
 
+/// Present after a user deletes a card. An explicitly empty review is different
+/// from a legacy project that has not materialized transcript cards yet.
+public struct ReviewEdits: Codable, Equatable, Sendable {
+    public var suppressedTranscriptIDs: [UUID]
+    public init(suppressedTranscriptIDs: [UUID] = []) {
+        self.suppressedTranscriptIDs = suppressedTranscriptIDs
+    }
+}
+
 public struct ProjectManifest: Codable, Equatable, Identifiable, Sendable {
     public var schemaVersion: Int
     public var id: UUID
@@ -200,13 +209,16 @@ public struct ProjectManifest: Codable, Equatable, Identifiable, Sendable {
     public var transcripts: [TranscriptSegment]
     public var reviewCards: [ReviewCard]
     public var asrChunks: [ASRChunk]
+    public var reviewEdits: ReviewEdits?
 
     public init(id: UUID = UUID(), title: String, createdAt: Date = Date(), recording: RecordingInfo? = nil,
                 captureState: CaptureState = .idle, anchors: [VisualAnchor] = [],
-                transcripts: [TranscriptSegment] = [], reviewCards: [ReviewCard] = [], asrChunks: [ASRChunk] = []) {
+                transcripts: [TranscriptSegment] = [], reviewCards: [ReviewCard] = [], asrChunks: [ASRChunk] = [],
+                reviewEdits: ReviewEdits? = nil) {
         self.schemaVersion = 1; self.id = id; self.title = title; self.createdAt = createdAt
         self.recording = recording; self.captureState = captureState; self.anchors = anchors
         self.transcripts = transcripts; self.reviewCards = reviewCards; self.asrChunks = asrChunks
+        self.reviewEdits = reviewEdits
     }
 }
 
@@ -350,6 +362,7 @@ public final class ProjectStore {
         }
         try unique(project.anchors.map(\.id)); try unique(project.transcripts.map(\.id))
         try unique(project.reviewCards.map(\.id)); try unique(project.asrChunks.map(\.id))
+        try unique(project.reviewEdits?.suppressedTranscriptIDs ?? [])
         if Set(project.asrChunks.map(\.index)).count != project.asrChunks.count {
             throw ProjectError.invalidManifest("duplicate chunk indices")
         }

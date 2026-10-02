@@ -1,5 +1,12 @@
 # Changelog
 
+## 0.3.3 — 2026-10-02
+
+- Add Delete for the selected review card in the card list and Edit menu, with confirmation. Save deletion before updating the interface, select the adjacent card, renumber the list, and disable unavailable actions after the final deletion. Original media and source transcripts remain available.
+- Persist deletion decisions so empty-review exports and transcription retries do not restore deleted passages. Older projects without deletion metadata retain their transcript-only export fallback.
+- Draw New Recording and Export Standalone HTML with a solid forest-teal primary background and white text/icons, including inactive-window, pressed and disabled states; retain native button actions and accessibility.
+- Cover deletion save/reopen/export/retry behavior, adjacent selection, busy controls and failed-write rollback in core/native regressions.
+
 ## 0.3.2 — 2026-10-02
 
 - Let the native capture preset negotiate compatible video/audio encoding instead of forcing a hardware preference, output dimensions, frame compression settings, and 44.1 kHz mono AAC. Keep source screen scaling, 5/10 fps, the selected microphone, and later ASR resampling.

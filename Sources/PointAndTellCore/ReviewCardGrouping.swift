@@ -26,6 +26,45 @@ public enum ReviewCardGrouping {
 }
 
 public extension ProjectManifest {
+    /// Delete the review card only. Shared anchors, source text and media remain
+    /// available, but automatic retries must not recreate the deleted passage.
+    @discardableResult mutating func deleteReviewCard(id: UUID) -> Bool {
+        guard let index = reviewCards.firstIndex(where: { $0.id == id }) else { return false }
+        let card = reviewCards.remove(at: index)
+        if reviewEdits == nil { reviewEdits = ReviewEdits() }
+        if let transcriptID = card.transcriptID,
+           reviewEdits?.suppressedTranscriptIDs.contains(transcriptID) == false {
+            reviewEdits?.suppressedTranscriptIDs.append(transcriptID)
+        }
+        if reviewCards.isEmpty {
+            // This also covers the final manual/detached card, whose source ID
+            // may no longer be known after a provider changed sentence bounds.
+            for source in transcripts where reviewEdits?.suppressedTranscriptIDs.contains(source.id) == false {
+                reviewEdits?.suppressedTranscriptIDs.append(source.id)
+            }
+        }
+        return true
+    }
+
+    var hasExportableCards: Bool {
+        !reviewCards.isEmpty || (reviewEdits == nil && !transcripts.isEmpty)
+    }
+
+    var cardsForExport: [ReviewCard] {
+        if reviewCards.isEmpty {
+            return reviewEdits == nil ? FrameMatcher.suggestCards(for: transcripts, anchors: anchors) : []
+        }
+        return ReviewCardGrouping.cards(from: reviewCards, transcripts: transcripts, anchors: anchors)
+    }
+
+    mutating func appendSuggestedReviewCards(for segments: [TranscriptSegment]) {
+        let represented = Set(reviewCards.compactMap(\.transcriptID))
+            .union(reviewEdits?.suppressedTranscriptIDs ?? [])
+        reviewCards.append(contentsOf: FrameMatcher.suggestCards(
+            for: segments.filter { !represented.contains($0.id) }, anchors: anchors))
+        groupReviewCards()
+    }
+
     /// Idempotent migration for old single-card projects. Edited text/times and
     /// manual selections stay intact; no transcription request is needed.
     @discardableResult mutating func groupReviewCards() -> Bool {
