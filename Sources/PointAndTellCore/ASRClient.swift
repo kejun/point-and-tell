@@ -56,53 +56,132 @@ public enum ASRRequestBuilder {
     }
 }
 
-/// macOS 11-compatible completion-handler transport; no async URLSession APIs.
-/// Responses are buffered until completion, then SSE finals are normalized.
+/// macOS 11-compatible delegate transport; no async URLSession APIs.
+/// Each request buffers at most 8 MiB before JSON/SSE normalization. Oversized
+/// bodies fail explicitly, including servers that omit or lie about Content-Length.
 public final class ASRURLSessionTransport: ASRTransport {
-    private let session: URLSession
+    public static let defaultMaximumResponseBytes = 8 * 1_024 * 1_024
+    private let configuration: URLSessionConfiguration
+    public let maximumResponseBytes: Int
 
-    public init(configuration: URLSessionConfiguration = .ephemeral) {
-        configuration.urlCache = nil
-        configuration.requestCachePolicy = .reloadIgnoringLocalCacheData
-        configuration.httpCookieStorage = nil
-        configuration.httpShouldSetCookies = false
-        configuration.urlCredentialStorage = nil
-        configuration.timeoutIntervalForResource = 600
-        session = URLSession(configuration: configuration, delegate: ASRRedirectBlocker(), delegateQueue: nil)
+    /// A smaller cap can be supplied for tests. The production safety cap cannot
+    /// be raised through this initializer.
+    public init(configuration: URLSessionConfiguration = .ephemeral,
+                maximumResponseBytes: Int = ASRURLSessionTransport.defaultMaximumResponseBytes) {
+        let isolated = (configuration.copy() as? URLSessionConfiguration) ?? .ephemeral
+        isolated.urlCache = nil
+        isolated.requestCachePolicy = .reloadIgnoringLocalCacheData
+        isolated.httpCookieStorage = nil
+        isolated.httpShouldSetCookies = false
+        isolated.urlCredentialStorage = nil
+        isolated.timeoutIntervalForResource = 600
+        self.configuration = isolated
+        self.maximumResponseBytes = max(1, min(maximumResponseBytes, Self.defaultMaximumResponseBytes))
     }
-
-    deinit { session.invalidateAndCancel() }
 
     @discardableResult
     public func send(_ request: URLRequest,
                      completion: @escaping (Result<ASRHTTPResponse, Error>) -> Void) -> ASRCancellable {
-        let task = session.dataTask(with: request) { data, response, error in
-            if let error = error { completion(.failure(error)); return }
-            guard let response = response as? HTTPURLResponse else {
-                completion(.failure(ASRError.invalidHTTPResponse)); return
-            }
-            completion(.success(ASRHTTPResponse(statusCode: response.statusCode, data: data ?? Data(),
-                                                contentType: response.value(forHTTPHeaderField: "Content-Type"))))
-        }
-        task.resume()
-        return ASRTaskHandle(task: task)
+        let operation = ASRURLSessionRequest(maximumResponseBytes: maximumResponseBytes, completion: completion)
+        operation.start(request, configuration: configuration)
+        return operation
     }
 }
 
-private final class ASRRedirectBlocker: NSObject, URLSessionTaskDelegate {
+/// URLSession retains its delegate for the lifetime of a request. Every terminal
+/// path clears the stored session and invalidates it, breaking that ownership
+/// cycle. The lock also serializes explicit cancellation against delegate callbacks.
+final class ASRURLSessionRequest: NSObject, URLSessionDataDelegate, ASRCancellable, @unchecked Sendable {
+    private let maximumResponseBytes: Int
+    private let lock = NSLock()
+    private var session: URLSession?
+    private var task: URLSessionDataTask?
+    private var response: HTTPURLResponse?
+    private var buffer = Data()
+    private var completion: ((Result<ASRHTTPResponse, Error>) -> Void)?
+
+    init(maximumResponseBytes: Int, completion: @escaping (Result<ASRHTTPResponse, Error>) -> Void) {
+        self.maximumResponseBytes = maximumResponseBytes
+        self.completion = completion
+        super.init()
+    }
+
+    func start(_ request: URLRequest, configuration: URLSessionConfiguration) {
+        let session = URLSession(configuration: configuration, delegate: self, delegateQueue: nil)
+        let task = session.dataTask(with: request)
+        lock.lock()
+        let isActive = completion != nil
+        if isActive { self.session = session; self.task = task }
+        lock.unlock()
+        if isActive { task.resume() } else { session.invalidateAndCancel() }
+    }
+
+    func cancel() { finish(.failure(URLError(.cancelled))) }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask,
+                    didReceive response: URLResponse,
+                    completionHandler: @escaping (URLSession.ResponseDisposition) -> Void) {
+        guard let httpResponse = response as? HTTPURLResponse else {
+            finish(.failure(ASRError.invalidHTTPResponse))
+            completionHandler(.cancel)
+            return
+        }
+        guard response.expectedContentLength <= Int64(maximumResponseBytes) else {
+            finish(.failure(ASRError.responseTooLarge))
+            completionHandler(.cancel)
+            return
+        }
+        lock.lock()
+        let isActive = completion != nil
+        if isActive { self.response = httpResponse }
+        lock.unlock()
+        completionHandler(isActive ? .allow : .cancel)
+    }
+
+    func urlSession(_ session: URLSession, dataTask: URLSessionDataTask, didReceive data: Data) {
+        lock.lock()
+        guard completion != nil else { lock.unlock(); return }
+        // Subtraction avoids overflow and no bytes beyond the cap are appended.
+        let exceedsLimit = data.count > maximumResponseBytes - buffer.count
+        if !exceedsLimit { buffer.append(data) }
+        lock.unlock()
+        if exceedsLimit { finish(.failure(ASRError.responseTooLarge)) }
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: Error?) {
+        lock.lock()
+        guard completion != nil else { lock.unlock(); return }
+        let response = self.response
+        let data = buffer
+        lock.unlock()
+        if let error = error { finish(.failure(error)); return }
+        guard let response = response else { finish(.failure(ASRError.invalidHTTPResponse)); return }
+        finish(.success(ASRHTTPResponse(statusCode: response.statusCode, data: data,
+                                       contentType: response.value(forHTTPHeaderField: "Content-Type"))))
+    }
+
     func urlSession(_ session: URLSession, task: URLSessionTask,
                     willPerformHTTPRedirection response: HTTPURLResponse,
                     newRequest request: URLRequest,
                     completionHandler: @escaping (URLRequest?) -> Void) {
         // Never forward the user's audio or key to a redirected destination.
+        // The original 3xx response is returned and ASRClient treats it as failure.
         completionHandler(nil)
     }
-}
 
-private final class ASRTaskHandle: ASRCancellable {
-    let task: URLSessionDataTask
-    init(task: URLSessionDataTask) { self.task = task }
-    func cancel() { task.cancel() }
+    private func finish(_ result: Result<ASRHTTPResponse, Error>) {
+        lock.lock()
+        guard let callback = completion else { lock.unlock(); return }
+        completion = nil
+        let session = self.session
+        self.session = nil
+        task = nil
+        response = nil
+        buffer = Data()
+        lock.unlock()
+        session?.invalidateAndCancel()
+        callback(result)
+    }
 }
 
 public final class ASRClient {

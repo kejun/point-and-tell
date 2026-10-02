@@ -173,11 +173,12 @@ public struct ProjectManifest: Codable, Equatable, Identifiable, Sendable {
 }
 
 public enum ProjectError: Error, LocalizedError, Equatable {
-    case invalidRelativePath, pathEscapesProject, missingFile, invalidManifest(String), projectAlreadyExists
+    case invalidRelativePath, pathEscapesProject, symbolicLinkNotAllowed, missingFile, invalidManifest(String), projectAlreadyExists
     public var errorDescription: String? {
         switch self {
         case .invalidRelativePath: return "A project file has an invalid relative path."
         case .pathEscapesProject: return "A project file points outside the project folder."
+        case .symbolicLinkNotAllowed: return "Symbolic links are not allowed in project file paths."
         case .missingFile: return "A project file is missing."
         case .invalidManifest(let reason): return "The project is invalid: \(reason)"
         case .projectAlreadyExists: return "A project already exists in this folder."
@@ -248,7 +249,10 @@ public final class ProjectStore {
         return project
     }
 
-    /// Reject traversal, absolute paths, URL strings, and symbolic links that leave the project.
+    /// Reject traversal, absolute paths, URL strings, and symbolic links within
+    /// project-relative paths. Checking EVERY component also protects writes to
+    /// missing leaves beneath a symlink, which resolvingSymlinksInPath alone
+    /// does not reliably resolve on macOS. The project root itself may be an alias.
     public func resolveRelativePath(_ path: String, requireExisting: Bool = false) throws -> URL {
         guard !path.isEmpty, !path.hasPrefix("/"), !path.contains("\\"), !path.contains(":"),
               !path.unicodeScalars.contains(where: { CharacterSet.controlCharacters.contains($0) }) else {
@@ -259,7 +263,25 @@ public final class ProjectStore {
             throw ProjectError.invalidRelativePath
         }
         let root = folderURL.resolvingSymlinksInPath().standardizedFileURL
-        let target = folderURL.appendingPathComponent(path).resolvingSymlinksInPath().standardizedFileURL
+        var target = root
+        for part in parts {
+            target.appendPathComponent(String(part))
+            // destinationOfSymbolicLink also detects dangling symbolic links.
+            if (try? fileManager.destinationOfSymbolicLink(atPath: target.path)) != nil {
+                throw ProjectError.symbolicLinkNotAllowed
+            }
+            do {
+                let attributes = try fileManager.attributesOfItem(atPath: target.path)
+                if attributes[.type] as? FileAttributeType == .typeSymbolicLink {
+                    throw ProjectError.symbolicLinkNotAllowed
+                }
+            } catch let error as NSError where error.domain == NSCocoaErrorDomain
+                && (error.code == NSFileReadNoSuchFileError || error.code == NSFileNoSuchFileError) {
+                // A missing path is valid for an imminent atomic write. Existing
+                // ancestors have already been checked one component at a time.
+            }
+        }
+        target = target.standardizedFileURL
         let rootParts = root.pathComponents
         let targetParts = target.pathComponents
         guard targetParts.count > rootParts.count,

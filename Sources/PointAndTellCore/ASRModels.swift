@@ -42,6 +42,7 @@ public enum ASRError: Error, LocalizedError, Equatable {
     case audioTooLong
     case encodedAudioTooLarge
     case invalidHTTPResponse
+    case responseTooLarge
     case httpStatus(Int, code: String?, requestID: String?)
     case provider(code: String, requestID: String?)
     case malformedResponse
@@ -55,6 +56,7 @@ public enum ASRError: Error, LocalizedError, Equatable {
         case .audioTooLong: return "An ASR request cannot exceed five minutes. Split the audio into approximately three-minute chunks."
         case .encodedAudioTooLarge: return "The Base64 audio exceeds the 10 MB request limit. Use smaller chunks."
         case .invalidHTTPResponse: return "The ASR service did not return an HTTP response."
+        case .responseTooLarge: return "The ASR response exceeded the safe download limit. Your audio was not marked complete."
         case .httpStatus(let status, _, _): return "The ASR service returned HTTP \(status). Your audio was not marked complete."
         case .provider: return "The ASR provider rejected the request. Your audio was not marked complete."
         case .malformedResponse: return "The ASR response could not be read safely."

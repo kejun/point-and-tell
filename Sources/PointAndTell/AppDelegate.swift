@@ -45,6 +45,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         recorder.onFailure = { [weak self] error in self?.recordingFailed(error) }
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
         if let index = CommandLine.arguments.firstIndex(of: "--smoke-test"), CommandLine.arguments.indices.contains(index + 1) { runUISmokeTest(directory: URL(fileURLWithPath: CommandLine.arguments[index + 1])) }
+        if let index = CommandLine.arguments.firstIndex(of: "--audio-smoke-test"), CommandLine.arguments.indices.contains(index + 1) {
+            AudioChunkerSmokeTest.run(directory: URL(fileURLWithPath: CommandLine.arguments[index + 1])) { result in
+                switch result { case .success(let evidence): print(evidence); exit(0); case .failure(let error): fputs("Audio smoke failed: \(error.localizedDescription)\n", stderr); exit(1) }
+            }
+        }
     }
 
 
@@ -122,7 +127,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         let tableScroll = NSScrollView(); tableScroll.documentView = table; tableScroll.hasVerticalScroller = true; split.addArrangedSubview(tableScroll)
         let detail = NSStackView(); detail.orientation = .vertical; detail.alignment = .leading; detail.spacing = 9; detail.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 0)
         detail.addArrangedSubview(cardInfo)
-        transcriptEditor.delegate = self; transcriptEditor.isRichText = false; transcriptEditor.font = .systemFont(ofSize: 15); transcriptEditor.isVerticallyResizable = true
+        transcriptEditor.delegate = self; transcriptEditor.isRichText = false;
+        transcriptEditor.minSize = NSSize(width: 0, height: 125); transcriptEditor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        transcriptEditor.isHorizontallyResizable = false; transcriptEditor.autoresizingMask = .width; transcriptEditor.textContainer?.widthTracksTextView = true; transcriptEditor.font = .systemFont(ofSize: 15); transcriptEditor.isVerticallyResizable = true
         let textScroll = NSScrollView(); textScroll.documentView = transcriptEditor; textScroll.hasVerticalScroller = true
         textScroll.heightAnchor.constraint(equalToConstant: 125).isActive = true; detail.addArrangedSubview(textScroll)
         startField.placeholderString = "起始秒，可空"; endField.placeholderString = "结束秒，可空"
@@ -239,7 +246,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     @objc private func openProject() {
         guard !busy else { return }; let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.title = "选择 .pointtell 项目文件夹"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { let chosen = ProjectStore(folderURL: url); project = try chosen.load(); store = chosen; report("已打开 \(project?.title ?? "项目")。原始录制与失败片段已保留。"); refresh() } catch { fail(error) }
+        do { let chosen = ProjectStore(folderURL: url); project = try chosen.load(); store = chosen
+            if let recording = project?.recording, let movie = try? chosen.resolveRelativePath(recording.relativePath, requireExisting: true) {
+                let duration = AVURLAsset(url: movie).duration.seconds
+                if duration.isFinite && duration > 0 { project?.recording?.durationSeconds = duration; try persist() }
+            }
+            report("已打开 \(project?.title ?? "项目")。原始录制与失败片段已保留。"); refresh() } catch { fail(error) }
     }
     @objc private func revealProject() { if let url = store?.folderURL { NSWorkspace.shared.activateFileViewerSelecting([url]) } }
 
@@ -316,10 +328,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     for offset in 0..<count {
                         let timestamp = start + (end - start) * (Double(offset) + 0.5) / Double(count)
                         if snapshot.anchors.contains(where: { abs($0.timestamp - timestamp) < 1 }) { continue }
-                        let (image, actual) = try VisualCapture.movieFrame(url: movie, at: min(timestamp, max(0, recording.durationSeconds - 0.1)))
-                        let id = UUID(); let relative = "frames/\(id.uuidString).png"
-                        try VisualCapture.save(image, to: store.resolveRelativePath(relative, requireExisting: false))
-                        added.append(VisualAnchor(id: id, timestamp: actual, imageRelativePath: relative))
+                        guard timestamp <= recording.durationSeconds else { warning = "部分句子时间超出录屏范围，请手动校对时间和配图"; continue }
+                        let anchor: VisualAnchor = try autoreleasepool {
+                            let (image, actual) = try VisualCapture.movieFrame(url: movie, at: timestamp)
+                            let id = UUID(); let relative = "frames/\(id.uuidString).png"
+                            try VisualCapture.save(image, to: store.resolveRelativePath(relative, requireExisting: false))
+                            return VisualAnchor(id: id, timestamp: actual, imageRelativePath: relative)
+                        }
+                        added.append(anchor)
                     }
                 }
             } catch { warning = error.localizedDescription }
@@ -392,13 +408,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         guard let project = project, let store = store else { return }
         let panel = NSSavePanel(); panel.title = bundle ? "保存图片与 Markdown 文件夹" : "保存独立 HTML"; panel.nameFieldStringValue = bundle ? "Point-and-Tell-export" : "Point-and-Tell.html"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do {
-            let result: ExportResult
-            if bundle { result = try ProjectExporter.exportBundle(project: project, store: store, to: url) }
-            else { result = try ProjectExporter.exportHTML(project: project, store: store, to: url) }
-            report(result.warnings.isEmpty ? "导出成功。HTML 可离线打开；给模型使用时，图片 + Markdown 包更稳妥。" : "导出完成，有 \(result.warnings.count) 条图片警告，请检查导出内容。")
-            NSWorkspace.shared.activateFileViewerSelecting([result.outputURL])
-        } catch { fail(error) }
+        setBusy(true, status: "正在本地生成导出文件…")
+        DispatchQueue.global(qos: .utility).async {
+            let result: Result<ExportResult, Error> = Result {
+                if bundle { return try ProjectExporter.exportBundle(project: project, store: store, to: url) }
+                return try ProjectExporter.exportHTML(project: project, store: store, to: url)
+            }
+            DispatchQueue.main.async {
+                self.setBusy(false)
+                switch result {
+                case .success(let exported):
+                    self.report(exported.warnings.isEmpty ? "导出成功。HTML 可离线打开；给模型使用时，图片 + Markdown 包更稳妥。" : "导出完成，有 \(exported.warnings.count) 条图片警告，请检查导出内容。")
+                    NSWorkspace.shared.activateFileViewerSelecting([exported.outputURL])
+                case .failure(let error): self.report("导出失败，原始项目已保留。"); self.fail(error)
+                }
+            }
+        }
     }
 }
 

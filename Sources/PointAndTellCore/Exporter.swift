@@ -128,6 +128,7 @@ public enum ProjectExporter {
             try addHTMLBudget(count * 6) // HTML escaping expands a quote to at most six bytes.
         }
         try textBudget(project.title)
+        try textBudget(project.title) // The title appears in both <title> and the visible heading.
         var warnings: [String] = []
         var exportedCards: [ExportCard] = []
         for (index, card) in cards.enumerated() {

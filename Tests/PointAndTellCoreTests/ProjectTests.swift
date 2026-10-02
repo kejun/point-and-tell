@@ -86,6 +86,13 @@ final class ProjectTests: XCTestCase {
         try FileManager.default.createDirectory(at: outside, withIntermediateDirectories: true)
         try FileManager.default.createSymbolicLink(at: store.folderURL.appendingPathComponent("escape"), withDestinationURL: outside)
         XCTAssertThrowsError(try store.resolveRelativePath("escape/image.png"))
+        XCTAssertThrowsError(try store.resolveRelativePath("escape/not-created/yet/image.png"))
+        try FileManager.default.createSymbolicLink(at: store.folderURL.appendingPathComponent("dangling"),
+                                                   withDestinationURL: outside.appendingPathComponent("not-created"))
+        XCTAssertThrowsError(try store.resolveRelativePath("dangling/image.png"))
+        try FileManager.default.createSymbolicLink(at: store.folderURL.appendingPathComponent("internal"),
+                                                   withDestinationURL: store.folderURL.appendingPathComponent("frames"))
+        XCTAssertThrowsError(try store.resolveRelativePath("internal/image.png"))
         try FileManager.default.removeItem(at: store.manifestURL)
         let secret = outside.appendingPathComponent("project.json")
         try Data("keep".utf8).write(to: secret)
