@@ -37,7 +37,7 @@ The macOS CI matrix compiles both architectures, runs the existing core/audio ch
 
 ## Native screenshots
 
-Rendered by the actual AppKit application on the macOS CI runner ([source build](https://github.com/kejun/point-and-tell/actions/runs/37000170176)). The example recording image is a synthetic fixture; no private screen, microphone or API data is used. The runner's display constrains these captures to 680pt content height.
+Rendered by the actual AppKit application on the macOS CI runner ([source build](https://github.com/kejun/point-and-tell/actions/runs/37008223275)). The example recording image is a synthetic fixture; no private screen, microphone or API data is used. The runner's display constrains these captures to 680pt content height.
 
 ### Welcome
 
@@ -50,3 +50,16 @@ Rendered by the actual AppKit application on the macOS CI runner ([source build]
 ### Dark / compact
 
 ![Dark review](screenshots/review-dark.png)
+
+
+### First-run prerequisites
+
+![Required setup](screenshots/setup-required.png)
+
+### Ready to enter
+
+![Ready setup](screenshots/setup-ready.png)
+
+### Persistent recording controls
+
+![Recording toolbar](screenshots/recording-toolbar.png)
