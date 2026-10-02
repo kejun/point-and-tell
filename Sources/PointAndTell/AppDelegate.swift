@@ -69,7 +69,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             demo.anchors = [anchor]; demo.reviewCards = [ReviewCard(text: "请把右上角这个按钮改大一些，让操作更容易看见。", frameIDs: [anchor.id], startSeconds: 2.1, endSeconds: 7.8), ReviewCard(text: "这句暂时没有可靠时间戳，可以手动选图。")]
             try demoStore.save(demo); store = demoStore; project = demo; report("UI smoke fixture · 没有录屏、麦克风或网络请求"); refresh(); table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                guard let view = self.window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(2) }
+                guard let view = self.window.contentView else { exit(2) }
+                view.layoutSubtreeIfNeeded()
+                guard view.bounds.width <= 1100, view.bounds.height <= 800, self.preview.bounds.height <= 280 else { fputs("UI layout exceeded laptop-sized window\n", stderr); exit(5) }
+                guard !self.transcriptEditor.string.isEmpty, self.apiKeyField.stringValue.isEmpty, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(2) }
                 view.cacheDisplay(in: view.bounds, to: rep)
                 guard let data = rep.representation(using: .png, properties: [:]) else { exit(3) }
                 do { try data.write(to: directory.appendingPathComponent("window.png")); print("UI_SMOKE_OK \(Int(view.bounds.width))x\(Int(view.bounds.height))"); exit(0) } catch { exit(4) }
@@ -137,13 +140,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         detail.addArrangedSubview(row([label("时间"), startField, label("→"), endField, button("保存文字与时间", #selector(saveCard), idleOnly: true)]))
         framePicker.target = self; framePicker.action = #selector(showSelectedFrame); framePicker.widthAnchor.constraint(equalToConstant: 280).isActive = true
         detail.addArrangedSubview(row([framePicker, button("替换配图", #selector(replaceFrame), idleOnly: true), button("添加配图", #selector(appendFrame), idleOnly: true)]))
-        preview.imageScaling = .scaleProportionallyUpOrDown; preview.heightAnchor.constraint(greaterThanOrEqualToConstant: 150).isActive = true
+        preview.imageScaling = .scaleProportionallyUpOrDown
+        preview.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        preview.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
+        preview.heightAnchor.constraint(greaterThanOrEqualToConstant: 150).isActive = true
+        preview.heightAnchor.constraint(lessThanOrEqualToConstant: 270).isActive = true
         detail.addArrangedSubview(preview)
         frameTimeField.widthAnchor.constraint(equalToConstant: 90).isActive = true
         detail.addArrangedSubview(row([label("从录屏取图（秒）"), frameTimeField, button("提取并配图", #selector(extractManualFrame), idleOnly: true), button("清除本卡配图", #selector(clearFrames), idleOnly: true)]))
         split.addArrangedSubview(detail); content.addArrangedSubview(split)
         content.addArrangedSubview(row([button("添加手动卡片", #selector(addCard), idleOnly: true), button("导出 HTML…", #selector(exportHTML), idleOnly: true), button("导出图片 + Markdown…", #selector(exportBundle), idleOnly: true)]))
-        window.contentView = NSView(); guard let root = window.contentView else { return }; root.addSubview(content); content.translatesAutoresizingMaskIntoConstraints = false
+        window.contentView = WindowBackgroundView(); guard let root = window.contentView else { return }; root.addSubview(content); content.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([content.leadingAnchor.constraint(equalTo: root.leadingAnchor), content.trailingAnchor.constraint(equalTo: root.trailingAnchor), content.topAnchor.constraint(equalTo: root.topAnchor), content.bottomAnchor.constraint(equalTo: root.bottomAnchor), split.widthAnchor.constraint(equalTo: content.widthAnchor, constant: -36), split.heightAnchor.constraint(greaterThanOrEqualToConstant: 430), tableScroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 210), tableScroll.widthAnchor.constraint(lessThanOrEqualToConstant: 300), textScroll.widthAnchor.constraint(equalTo: detail.widthAnchor, constant: -12), preview.widthAnchor.constraint(equalTo: detail.widthAnchor, constant: -12)])
         window.center()
     }
@@ -426,6 +433,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             }
         }
     }
+}
+
+final class WindowBackgroundView: NSView {
+    override var isOpaque: Bool { true }
+    override func draw(_ dirtyRect: NSRect) { NSColor.windowBackgroundColor.setFill(); dirtyRect.fill() }
 }
 
 import Carbon
