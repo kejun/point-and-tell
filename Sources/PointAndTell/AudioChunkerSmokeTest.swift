@@ -41,6 +41,7 @@ enum AudioChunkerSmokeTest {
         let suspectedSilence: Bool
         let chunkDurationsSeconds: [Double]
         let chunkStartSeconds: [Double]
+        let detectedSignalStartSeconds: Double?
         let playbackReadyChecked: Bool
     }
 
@@ -135,20 +136,25 @@ enum AudioChunkerSmokeTest {
             let originalDigest = try digest(source)
             let report = try AudioInspector.inspect(movieURL: source)
             try require(report.audioTrackPresent && report.decodedFrameCount > 0, "\(fixture.name): source inspector lost samples")
-            try require(abs(report.durationSeconds - Double(fixture.seconds)) < fixture.timingTolerance,
+            // A reader may omit the empty edit (first PTS is the audio offset)
+            // or render it as leading PCM silence (first PTS is near zero).
+            // Both are valid only if the WAV's actual signal stays at the same
+            // absolute movie time; validate() tests that independently below.
+            let signalDuration = Double(fixture.seconds)
+            let renderedDuration = signalDuration + fixture.offset
+            try require(min(abs(report.durationSeconds - signalDuration),
+                            abs(report.durationSeconds - renderedDuration)) < fixture.timingTolerance,
                         "\(fixture.name): decoded audio duration \(report.durationSeconds), frames \(report.decodedFrameCount), track span \(report.trackSpanDurationSeconds)")
-            try require(abs(Double(report.decodedFrameCount) / Double(sampleRate) - Double(fixture.seconds)) < fixture.timingTolerance,
-                        "\(fixture.name): decoded source sample count is wrong")
             try require(abs(report.durationSeconds - Double(report.decodedFrameCount) / Double(sampleRate)) <= 1.0 / Double(sampleRate),
-                        "\(fixture.name): reported sample duration includes empty timeline edits")
+                        "\(fixture.name): reported duration disagrees with actual decoded frames")
             try require(abs(report.trackSpanDurationSeconds - CMTimeGetSeconds(audio.timeRange.duration)) <= 1.0 / Double(sampleRate),
                         "\(fixture.name): source track span was not preserved separately")
             if fixture.offset > 0 {
                 let movieDuration = CMTimeGetSeconds(asset.duration)
                 try require(abs(movieDuration - Double(fixture.seconds) - fixture.offset) <= fixture.timingTolerance,
                             "\(fixture.name): delayed fixture movie does not include its initial empty edit")
-                try require(abs(movieDuration - report.durationSeconds - fixture.offset) <= fixture.timingTolerance,
-                            "\(fixture.name): decoded duration was confused with the movie timeline")
+                try require(report.durationSeconds <= movieDuration + fixture.timingTolerance,
+                            "\(fixture.name): decoded duration exceeds the movie timeline")
             }
             try require(report.rmsDBFS.isFinite && report.peakDBFS.isFinite, "inspection produced non-finite decibels")
             // Exact digital silence is represented by finite -120 dBFS values,
@@ -166,7 +172,7 @@ enum AudioChunkerSmokeTest {
                 passedChecks.append(fixture.name + ": local AVPlayerItem readyToPlay, muted, never started")
             }
             let chunks = try extract(source, directory: output).get()
-            try validate(chunks, fixture: fixture, directory: output)
+            let detectedSignalStart = try validate(chunks, fixture: fixture, directory: output)
             try require(try digest(source) == originalDigest, "\(fixture.name): source MOV was modified")
 
             // Retry a long movie to exercise both a completed full-sized chunk
@@ -179,7 +185,7 @@ enum AudioChunkerSmokeTest {
                 let sentinel = Data("preserved partial audio sentinel".utf8)
                 try sentinel.write(to: partial, options: .withoutOverwriting)
                 let retry = try extract(source, directory: output).get()
-                try validate(retry, fixture: fixture, directory: output)
+                _ = try validate(retry, fixture: fixture, directory: output)
                 try require(Set(chunks.map(\.relativePath)).isDisjoint(with: Set(retry.map(\.relativePath))),
                             "retry overwrote an existing extraction path")
                 for (chunk, expected) in zip(chunks, digests) {
@@ -196,27 +202,29 @@ enum AudioChunkerSmokeTest {
                 sourceDecodedFrames: report.decodedFrameCount, rmsDBFS: report.rmsDBFS,
                 peakDBFS: report.peakDBFS, suspectedSilence: report.suspectedSilence,
                 chunkDurationsSeconds: chunks.map(\.durationSeconds),
-                chunkStartSeconds: chunks.map(\.startSeconds), playbackReadyChecked: checkedPlayback))
+                chunkStartSeconds: chunks.map(\.startSeconds), detectedSignalStartSeconds: detectedSignalStart,
+                playbackReadyChecked: checkedPlayback))
             passedChecks.append(fixture.name + ": MOV/WAV inspection, PCM16 mono 16 kHz format, duration and timeline, "
-                + (fixture.amplitude == 0 ? "soft silence warning" : "RMS/peak and 1 kHz tone correlation")
+                + (fixture.amplitude == 0 ? "soft silence warning" : "absolute signal onset, quiet leading interval, RMS/peak and 1 kHz tone correlation")
                 + ", unchanged source")
         }
 
-        private func validate(_ chunks: [AudioChunk], fixture: Fixture, directory: URL) throws {
+        private func validate(_ chunks: [AudioChunk], fixture: Fixture, directory: URL) throws -> Double? {
             let expectedCount = fixture.seconds > 180 ? 2 : 1
             try require(chunks.count == expectedCount, "\(fixture.name): expected \(expectedCount) chunks, got \(chunks.count)")
             let frameTolerance = 1.0 / Double(sampleRate)
             var duration = 0.0
+            var detectedSignalStart: Double?
             for (index, chunk) in chunks.enumerated() {
                 try checkDeadline()
-                try require(chunk.index == index && chunk.startSeconds.isFinite && chunk.durationSeconds.isFinite,
+                try require(chunk.index == index && chunk.startSeconds.isFinite && chunk.startSeconds >= 0 && chunk.durationSeconds.isFinite,
                             "invalid chunk metadata")
                 try require(chunk.durationSeconds > 0 && chunk.durationSeconds <= 180, "chunk exceeds the 180-second boundary")
                 try require(!chunk.relativePath.hasPrefix("/") && !chunk.relativePath.split(separator: "/").contains(".."),
                             "chunk path is not safely relative")
                 if index == 0 {
-                    try require(abs(chunk.startSeconds - fixture.offset) <= fixture.timingTolerance,
-                                "\(fixture.name): movie-relative offset \(chunk.startSeconds), expected \(fixture.offset)")
+                    try require(min(abs(chunk.startSeconds), abs(chunk.startSeconds - fixture.offset)) <= fixture.timingTolerance,
+                                "\(fixture.name): first chunk \(chunk.startSeconds) is neither full-span nor offset-trimmed PCM")
                 } else {
                     let previous = chunks[index - 1]
                     try require(abs(chunk.startSeconds - previous.startSeconds - previous.durationSeconds) <= frameTolerance,
@@ -246,28 +254,84 @@ enum AudioChunkerSmokeTest {
                                     "silent WAV should succeed with a soft amplitude warning")
                     } else {
                         try require(!inspection.suspectedSilence, "non-silent WAV falsely flagged as silence")
-                        try validateTone(parsed, name: fixture.name)
+                        if index == 0 {
+                            detectedSignalStart = try validateSignalOnset(parsed, chunk: chunk, fixture: fixture)
+                        }
+                        let leadingFrames = max(0, Int(((fixture.offset - chunk.startSeconds) * Double(sampleRate)).rounded()))
+                        try validateTone(parsed, name: fixture.name, leadingFrames: leadingFrames)
                     }
                 }
                 duration += chunk.durationSeconds
             }
-            try require(abs(duration - Double(fixture.seconds)) <= fixture.timingTolerance,
-                        "\(fixture.name): total WAV duration \(duration), expected \(fixture.seconds)")
+            let endTime = chunks[0].startSeconds + duration
+            let expectedEnd = fixture.offset + Double(fixture.seconds)
+            try require(abs(endTime - expectedEnd) <= fixture.timingTolerance,
+                        "\(fixture.name): WAV timeline ends at \(endTime), expected \(expectedEnd)")
+            return detectedSignalStart
         }
 
-        private func validateTone(_ audio: ASRWAVAudio, name: String) throws {
-            // Skip AAC start/end transients. A phase-independent sine/cosine
+        /// Measure actual PCM energy on the original movie timeline, so merely
+        /// allowing both legal empty-edit representations cannot hide a shift.
+        /// The 30 ms onset tolerance is much smaller than the 375 ms delay and
+        /// accommodates AAC attack/transients and the 10 ms measurement window.
+        private func validateSignalOnset(_ audio: ASRWAVAudio, chunk: AudioChunk, fixture: Fixture) throws -> Double {
+            func value(at frame: Int) -> Double {
+                let offset = audio.pcmRange.lowerBound + frame * 2
+                let bits = UInt16(audio.wav[offset]) | UInt16(audio.wav[offset + 1]) << 8
+                return Double(Int16(bitPattern: bits)) / 32_768.0
+            }
+            let leadingSeconds = max(0, fixture.offset - chunk.startSeconds)
+            // Ignore 50 ms immediately before the attack to avoid interpreting
+            // codec pre-ringing as an alignment error in known digital silence.
+            let quietFrames = min(audio.frameCount, max(0, Int((leadingSeconds - 0.05) * Double(sampleRate))))
+            if quietFrames > 0 {
+                var squares = 0.0
+                var peak = 0.0
+                for frame in 0..<quietFrames {
+                    let sample = value(at: frame)
+                    squares += sample * sample
+                    peak = max(peak, abs(sample))
+                }
+                let rms = sqrt(squares / Double(quietFrames))
+                try require(rms < 0.002 && peak < 0.01,
+                            "\(fixture.name): signal appeared before its intended movie offset (leading RMS \(rms), peak \(peak))")
+            }
+            let windowFrames = sampleRate / 100
+            let limit = min(audio.frameCount, Int((leadingSeconds + 0.5) * Double(sampleRate)))
+            var consecutive = 0
+            for first in stride(from: 0, through: limit - windowFrames, by: windowFrames) {
+                var squares = 0.0
+                for frame in first..<(first + windowFrames) {
+                    let sample = value(at: frame)
+                    squares += sample * sample
+                }
+                let rms = sqrt(squares / Double(windowFrames))
+                consecutive = rms >= 0.08 ? consecutive + 1 : 0
+                if consecutive == 3 {
+                    let onset = chunk.startSeconds + Double(first - 2 * windowFrames) / Double(sampleRate)
+                    try require(abs(onset - fixture.offset) <= 0.03,
+                                "\(fixture.name): actual signal onset \(onset), expected movie time \(fixture.offset)")
+                    return onset
+                }
+            }
+            throw TestFailure(message: "\(fixture.name): no sustained tone near the expected movie offset")
+        }
+
+        private func validateTone(_ audio: ASRWAVAudio, name: String, leadingFrames: Int) throws {
+            // Skip only the fixture's known leading silence and AAC start/end
+            // transients. A phase-independent sine/cosine
             // projection detects wrong resampling, zero-filled output, noise and
             // frequency changes without depending on lossy AAC bit identity.
             let trim = 1_280
-            let count = min(32_000, audio.frameCount - 2 * trim)
+            let startFrame = leadingFrames + trim
+            let count = min(32_000, audio.frameCount - startFrame - trim)
             try require(count > 4_000, "\(name): too few tone samples")
             var squares = 0.0
             var peak = 0.0
             var sine = 0.0
             var cosine = 0.0
             for index in 0..<count {
-                let offset = audio.pcmRange.lowerBound + (trim + index) * 2
+                let offset = audio.pcmRange.lowerBound + (startFrame + index) * 2
                 let bits = UInt16(audio.wav[offset]) | UInt16(audio.wav[offset + 1]) << 8
                 let value = Double(Int16(bitPattern: bits)) / 32_768.0
                 let angle = 2 * Double.pi * frequency * Double(index) / Double(sampleRate)

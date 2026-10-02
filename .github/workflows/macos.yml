@@ -34,6 +34,10 @@ jobs:
             target="$(mktemp -d)"
             ditto -x -k "$archive" "$target"
             codesign --verify --strict --verbose=2 "$target/Point & Tell.app"
+            if [[ "$archive" == "releases/v$(cat VERSION)/"* ]]; then
+              "$target/Point & Tell.app/Contents/MacOS/PointAndTell" --audio-smoke-test "$PWD/dist/committed-audio-smoke"
+              "$target/Point & Tell.app/Contents/MacOS/PointAndTell" --smoke-test "$PWD/dist/committed-ui-smoke"
+            fi
             rm -rf "$target"
           done
       - name: Toolchain
@@ -42,11 +46,13 @@ jobs:
         timeout-minutes: 5
         run: swift test --arch ${{ matrix.arch }}
       - name: Build Universal macOS 11 app
+        id: package
         run: ARCH=universal scripts/build-app.sh
       - name: Verify native AAC audio chain
         timeout-minutes: 4
         run: '"dist/Point & Tell.app/Contents/MacOS/PointAndTell" --audio-smoke-test "$PWD/dist/audio-smoke"'
       - name: Render native review UI fixture
+        if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         timeout-minutes: 2
         run: '"dist/Point & Tell.app/Contents/MacOS/PointAndTell" --smoke-test "$PWD/dist/ui-smoke"'
       - name: Upload ad-hoc signed app
@@ -67,4 +73,6 @@ jobs:
           path: |
             dist/ui-smoke/window.png
             dist/audio-smoke/**/results.json
+            dist/committed-audio-smoke/**/results.json
+            dist/committed-ui-smoke/window.png
           if-no-files-found: ignore

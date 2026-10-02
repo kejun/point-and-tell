@@ -8,10 +8,10 @@ import CoreMedia
 /// still contain useful speech, so suspectedSilence must never be a hard error.
 struct AudioInspectionReport: Codable, Equatable {
     let audioTrackPresent: Bool
-    /// Duration represented by decoded PCM frames, excluding empty timeline
-    /// edits such as an initial delay before the microphone's first sample.
+    /// Duration represented by decoded PCM frames. AVAssetReader may render
+    /// empty timeline edits as silent frames; those frames count here too.
     let durationSeconds: Double
-    /// Container track span; may include empty edits and is not sample duration.
+    /// Container track span, which can differ from the decoded sample duration.
     let trackSpanDurationSeconds: Double
     let decodedFrameCount: Int64
     let rmsDBFS: Double
@@ -58,7 +58,8 @@ enum AudioInspector {
         }
         // AVAssetWriter can put an initial empty edit inside this time range:
         // a 2 s signal starting at movie time 0.375 s can have a 2.375 s span.
-        // Sample duration must therefore come from the decoded frame count.
+        // The reader can render that empty edit as PCM silence. Always report
+        // the frames actually decoded instead of guessing from track metadata.
         let trackSpanDuration = CMTimeGetSeconds(track.timeRange.duration)
         guard trackSpanDuration.isFinite, trackSpanDuration >= 0 else { throw InspectionError.invalidDuration }
         let reader: AVAssetReader
