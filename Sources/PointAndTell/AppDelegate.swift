@@ -246,6 +246,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     self.setBusy(true)
                     guard !self.exportHTMLButton.isEnabled && !self.exportBundleButton.isEnabled, !self.startButton.isEnabled, !self.transcriptEditor.isEditable else { exit(9) }
                     self.setBusy(false)
+                    try self.verifyUpdateProtection(store: demoStore, directory: directory)
                     self.project?.reviewCards = []; self.editingCardID = nil; self.refresh()
                     guard self.emptyContainer.isHidden == false, !self.exportHTMLButton.isEnabled && !self.exportBundleButton.isEnabled else { exit(10) }
                     try render("project-empty", width: 1080, height: 760)
@@ -413,7 +414,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                        screenshotPending: pendingScreenshot, annotationOpen: drawing != nil,
                        modalOpen: NSApp.modalWindow != nil || NSApp.windows.contains { $0.attachedSheet != nil })
     }
-    private func installUpdater() {
+    private func installUpdater(start: Bool = true) {
         let updater = UpdateController(activity: { [weak self] in
             self?.updateActivity ?? UpdateActivity(processingBusy: true)
         }, save: { [weak self] in self?.saveBeforeExit() ?? false },
@@ -423,7 +424,34 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         if let menu = NSApp.mainMenu?.items.first?.submenu {
             updater.addMenuItems(to: menu)
         }
-        updater.start()
+        if start { updater.start() }
+    }
+    private func verifyUpdateProtection(store demoStore: ProjectStore, directory: URL) throws {
+        // Exercise this app's real UI lock and persistence callbacks without
+        // initializing Sparkle's network scheduler or touching the production feed.
+        installUpdater(start: false)
+        guard let updater = updateController else { exit(41) }
+        setBusy(true)
+        guard !updater.beginInteraction() else { exit(42) }
+        setBusy(false)
+        let previousStart = startField.stringValue
+        startField.stringValue = "invalid"; timingDirty = true
+        guard !updater.beginInteraction(), !busy, transcriptEditor.isEditable else { exit(43) }
+        startField.stringValue = previousStart
+        guard commitTiming() else { exit(44) }
+        let blocker = directory.appendingPathComponent("update-save-blocker")
+        try Data("not a directory".utf8).write(to: blocker)
+        store = ProjectStore(folderURL: blocker)
+        guard !updater.beginInteraction(), !busy else { exit(45) }
+        guard applicationShouldTerminate(NSApp) == .terminateCancel else { exit(46) }
+        store = demoStore
+        guard updater.beginInteraction(), busy, !startButton.isEnabled,
+              !exportHTMLButton.isEnabled, !transcriptEditor.isEditable else { exit(47) }
+        // The updater's own UI lock must not block a safe installation restart.
+        guard applicationShouldTerminate(NSApp) == .terminateNow else { exit(48) }
+        updater.terminationWasCancelled()
+        guard !busy, startButton.isEnabled, transcriptEditor.isEditable else { exit(49) }
+        print("UPDATE_GUARD_SMOKE_OK · busy work, invalid timing, disk failure, UI locking and safe termination")
     }
     private func saveBeforeExit() -> Bool {
         guard commitTiming() else { return false }

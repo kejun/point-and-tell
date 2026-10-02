@@ -56,11 +56,17 @@ final class UpdateController: NSObject, SPUUpdaterDelegate, SPUStandardUserDrive
     @objc private func checkForUpdates() {
         guard let controller = controller, controller.updater.canCheckForUpdates else { return }
         if !session.blocksWork {
-            guard session.begin(activity: activity(), save: save) else { return }
-            changed()
+            guard beginInteraction() else { return }
         }
         pendingOffer = false; stopOfferTimer()
         controller.checkForUpdates(nil)
+    }
+
+    @discardableResult
+    func beginInteraction() -> Bool {
+        guard session.begin(activity: activity(), save: save) else { return false }
+        changed()
+        return true
     }
 
     @objc private func toggleAutomaticChecks() {

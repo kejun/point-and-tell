@@ -33,7 +33,7 @@ fi
   --download-url-prefix "https://example.invalid/releases/" "$FIXTURE/archives"
 "$SIGN" --ed-key-file "$FIXTURE/key" --verify "$FIXTURE/archives/appcast.xml"
 python3 - <<'PY'
-import os, pathlib, plistlib, xml.etree.ElementTree as E
+import base64, json, os, pathlib, plistlib, sys, xml.etree.ElementTree as E
 p = pathlib.Path(os.environ["FIXTURE"])
 item, = E.parse(p / "archives/appcast.xml").findall("./channel/item")
 ns = "{http://www.andymatuschak.org/xml-namespaces/sparkle}"
@@ -42,6 +42,20 @@ info = plistlib.loads((p / "Point & Tell.app/Contents/Info.plist").read_bytes())
 assert item.findtext(ns + "version") == info["CFBundleVersion"]
 assert item.find("enclosure").get("url") == "https://example.invalid/releases/test.zip"
 assert int(item.find("enclosure").get("length")) == (p / "archives/test.zip").stat().st_size
+sys.path.insert(0, "scripts")
+from release_support import validate_feed
+manifest = json.loads(pathlib.Path("dist/build.json").read_text())
+manifest.update(archive="test.zip", bytes=(p / "archives/test.zip").stat().st_size,
+                update_public_key=os.environ["TEST_PUBLIC"])
+# Verify the real generator's element/signature layout against our publisher's
+# guards. Use a copy with the immutable URL; cryptographic verification above
+# already checked the untouched original feed.
+immutable_url = ("https://raw.githubusercontent.com/kejun/point-and-tell/" + "b" * 40
+                 + "/releases/v" + manifest["version"] + "/test.zip")
+validation_copy = p / "validation.xml"
+validation_copy.write_text((p / "archives/appcast.xml").read_text().replace(
+    "https://example.invalid/releases/test.zip", immutable_url))
+validate_feed(validation_copy, manifest, "b" * 40, os.environ["TEST_PUBLIC"])
 feed = p / "archives/appcast.xml"
 feed.write_text(feed.read_text().replace("example.invalid", "tampered.invalid"))
 PY

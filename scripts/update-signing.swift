@@ -5,7 +5,7 @@ import CryptoKit
 
 enum SigningError: Error { case arguments, key, signature, existingFile }
 func privateKey(_ path: String) throws -> Curve25519.Signing.PrivateKey {
-    let text = try String(contentsOfFile: path).trimmingCharacters(in: .whitespacesAndNewlines)
+    let text = try String(contentsOfFile: path, encoding: .utf8).trimmingCharacters(in: .whitespacesAndNewlines)
     guard let bytes = Data(base64Encoded: text), bytes.count == 32 else { throw SigningError.key }
     return try Curve25519.Signing.PrivateKey(rawRepresentation: bytes)
 }

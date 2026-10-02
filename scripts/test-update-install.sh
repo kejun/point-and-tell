@@ -14,18 +14,29 @@ trap cleanup EXIT
 export INSTALL_FIXTURE
 mkdir -p "$INSTALL_FIXTURE/feed" "$INSTALL_FIXTURE/current"
 python3 -u - <<'PY' > "$INSTALL_FIXTURE/server.log" 2>&1 &
-import functools, http.server, os, pathlib
+import functools, http.server, os, pathlib, socketserver
 root = pathlib.Path(os.environ["INSTALL_FIXTURE"])
 handler = functools.partial(http.server.SimpleHTTPRequestHandler, directory=str(root / "feed"))
-server = http.server.ThreadingHTTPServer(("127.0.0.1", 0), handler)
+class LocalServer(http.server.ThreadingHTTPServer):
+    def server_bind(self):
+        # HTTPServer normally does reverse DNS here; a CI host's DNS can stall
+        # even on a loopback address. This server only needs its numeric port.
+        socketserver.TCPServer.server_bind(self)
+        self.server_name = "localhost"
+        self.server_port = self.socket.getsockname()[1]
+server = LocalServer(("127.0.0.1", 0), handler)
 (root / "port").write_text(str(server.server_port))
 server.serve_forever()
 PY
 SERVER_PID=$!
-for attempt in {1..50}; do
+for attempt in {1..200}; do
   [[ ! -f "$INSTALL_FIXTURE/port" ]] || break
+  if ! kill -0 "$SERVER_PID" 2>/dev/null; then
+    cat "$INSTALL_FIXTURE/server.log"; exit 1
+  fi
   sleep 0.1
 done
+[[ -f "$INSTALL_FIXTURE/port" ]] || { cat "$INSTALL_FIXTURE/server.log"; echo "Local server did not start." >&2; exit 1; }
 PORT="$(cat "$INSTALL_FIXTURE/port")"
 export PORT
 TEST_PUBLIC="$(swift scripts/update-signing.swift generate "$INSTALL_FIXTURE/key")"
