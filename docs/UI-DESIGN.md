@@ -1,10 +1,18 @@
-# Native workspace · v0.2.1
+# Native workspace · v0.3.0
 
-The app now organizes the task around **record → review → share**. It remains dependency-free AppKit on macOS 11+; capture, WAV inspection and provider request behavior are unchanged.
+The app now organizes the task around **record → review → share**. It remains dependency-free AppKit on macOS 11+; the first-run gate, automatic transcription and persistent recording HUD share the same native visual system.
+
+## First launch
+
+The setup window precedes the workspace. Three numbered cards explain screen recording, microphone and Qwen API key configuration. Live permission/device status and a fixed footer make missing requirements visible; Continue stays disabled until all checks and automatic-upload consent are satisfied. Keys save to the macOS Keychain, including before an OS-requested relaunch. The form scrolls at compact window sizes.
+
+## Recording HUD
+
+The movable toolbar stays frontmost across app and Space changes, including full-screen Spaces, without stealing keyboard focus. Its timer, live microphone meter, mark, pen and Stop actions remain visible while marking or annotating. Recording completion removes the HUD and starts transcription after local audio validation.
 
 ## Workspace
 
-- **Sidebar:** chosen app identity, new/open project, screen/frame-rate/microphone settings, local playback and opt-in transcription. Settings scroll on short displays.
+- **Sidebar:** chosen app identity, new/open project, screen/frame-rate/microphone settings, local playback, transcription progress/retry and a permissions/key settings action. Settings scroll on short displays.
 - **Header:** project title, card/image counts and two directly visible export buttons: **导出独立 HTML…** and **导出图片 + Markdown…**. Both remain visible in the compact layout.
 - **Card list:** numbered summaries with timing and image counts, native keyboard selection and an add action.
 - **Editor:** automatically saved text, explicit timing fields, large screenshot preview, attached-image count and image assignment tools. The editor scrolls independently on smaller windows.
@@ -25,7 +33,7 @@ Text saves to the local project as it changes. Timing drafts are validated and c
 
 ## Verification
 
-The macOS CI matrix compiles both architectures, runs the existing core/audio checks, packages a signed Universal app and renders native UI fixtures. `--smoke-test` captures light review, compact dark review, empty project and welcome screens, and checks text persistence, timing commits, empty previews and busy-state availability. These are app view renders, not desktop captures. They do not replace real-device recording permission, keyboard/VoiceOver or minimum-OS usability checks.
+The macOS CI matrix compiles both architectures, runs the existing core/audio checks, packages a signed Universal app and renders native UI fixtures. `--smoke-test` captures light review, compact dark review, empty project, welcome, blocked/ready setup and recording toolbar screens, and checks text persistence, timing commits, empty previews and busy-state availability, setup save failures and completion gating, and toolbar window policy/cleanup. These are app view renders, not desktop captures. They do not replace real-device recording permission, keyboard/VoiceOver or minimum-OS usability checks.
 
 ## Native screenshots
 

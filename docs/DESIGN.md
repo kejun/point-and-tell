@@ -14,7 +14,9 @@ ASR supplies chunk-relative millisecond times. The app adds chunk.startSeconds o
 
 ## Transcription
 
-Explicit user action uploads only WAV audio. URLSession has no disk cache/cookie persistence and rejects redirects. Responses are buffered with an 8 MiB hard cap. The API key is ephemeral, never in manifest/export/logs; there is no Keychain-saving feature in this preview. One request runs at a time. JSON and SSE are normalized; only sentence_end finalized events count. Responses without reliable times remain untimed. Input size/duration is checked before network dispatch. No request auto-retry means unexpected billing is avoided; user retries completed/pending chunks through saved state.
+First-run setup blocks workspace access until screen/microphone permissions, hardware, an API key and automatic-upload consent are ready. The key is stored in the local macOS Keychain on a background queue, never in manifest/export/logs or UserDefaults. After successful recording finalization and local audio checks, one automatic transcription attempt uploads only WAV audio. Quiet or unusable audio pauses for review; manual retries retain explicit consent.
+
+URLSession has no disk cache/cookie persistence and rejects redirects. Responses are buffered with an 8 MiB hard cap. One request runs at a time. Qwen requests always ask for final JSON, with SSE disabled regardless of chunk length. The parser also accepts finalized SSE for compatibility, but only complete sentence/word timing is accepted as a successful chunk. Untimed/incomplete provider responses fail safely without inventing timing or replacing old text. Input size/duration is checked before network dispatch. Requests never retry automatically; successful complete chunks are reused. See QWEN-ASR.md for the provider's documented response limitations.
 
 Project states and chunk states are atomically persisted. Reopening recovers in-flight states to interrupted/pending. Raw recording and audio files remain immutable. A cancelled request might already have reached/billed the provider; cancellation cannot retract transmitted data.
 
@@ -25,3 +27,10 @@ FrameMatcher prioritizes pen then bookmark then ordinary video frames inside the
 ## Persistence
 
 A `.pointtell` folder contains project.json, recording.mov, frames/*.png and audio/*.wav. Manifest writes are atomic. There is no automatic cleanup. No telemetry, DB, account or server. User selects new destination for each recording. Export never overwrites project source files.
+
+
+## Recording toolbar
+
+A nonactivating NSPanel sits above normal, floating and annotation windows, joins all Spaces, and supports other apps' full-screen Spaces. It cannot hide with the app or become the main/key window. App/Space transitions and a lightweight timer restore its frontmost order without activating the app. The timer and observers are removed after recording finishes or fails. The HUD starts on the selected recording display and can be dragged.
+
+Bookmarks use CGWindowListCreateImage below the toolbar's window ID so the controls remain visible while the saved screenshot excludes them. Pen annotation windows and their controls sit below the recording HUD, keeping Stop available. The source MOV may still include these controls. macOS secure system surfaces retain system-controlled ordering; real multi-display, full-screen and Spaces behavior belongs in the device checklist.

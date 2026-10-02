@@ -46,8 +46,10 @@ public enum ASRResponseParser {
         guard let output = envelope.output else { throw ASRError.malformedResponse }
         if let payloads = output.sentences ?? output.output?.sentences, !payloads.isEmpty {
             let sentences = try payloads.filter { $0.sentenceEnd != false }.map { try normalized($0) }
+                .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             guard !sentences.isEmpty else { throw ASRError.noFinalSentences }
             if let fullText = output.text ?? output.output?.text,
+               !fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                fullText.filter({ !$0.isWhitespace }) != sentences.map(\.text).joined().filter({ !$0.isWhitespace }) {
                 return ASRResult(sentences: [ASRSentence(text: fullText)])
             }

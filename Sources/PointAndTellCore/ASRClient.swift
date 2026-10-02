@@ -49,8 +49,10 @@ public enum ASRRequestBuilder {
         request.timeoutInterval = 180
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(audio.durationSeconds >= 60 ? "enable" : "disable", forHTTPHeaderField: "X-DashScope-SSE")
-        request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
+        // Match the Qwen-Audio-3.0 model page's final-result request at every
+        // duration. A long recording must not silently switch response modes.
+        request.setValue("disable", forHTTPHeaderField: "X-DashScope-SSE")
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
         do { request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) }
         catch { throw ASRError.requestEncoding }
         return request
@@ -210,7 +212,7 @@ public final class ASRClient {
                     }
                     return Result {
                         try ASRResponseParser.parse(data: response.data, contentType: response.contentType,
-                                                    redactingSecrets: [apiKey]).sentences
+                                                    redactingSecrets: [apiKey]).validatedSentences()
                     }
                 }
                 operation.finish(parsed)

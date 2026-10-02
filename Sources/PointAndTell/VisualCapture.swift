@@ -9,11 +9,16 @@ struct CapturedVisual {
 }
 
 enum VisualCapture {
-    static func screen(displayID: CGDirectDisplayID) throws -> CapturedVisual {
-        guard let image = CGDisplayCreateImage(displayID) else {
+    static func screen(displayID: CGDirectDisplayID, belowWindowID: CGWindowID? = nil) throws -> CapturedVisual {
+        let rect = CGDisplayBounds(displayID)
+        // Composite below the HUD instead of hiding it during a bookmark or
+        // throughout annotation. The stop button remains available throughout.
+        let capture = belowWindowID.map {
+            CGWindowListCreateImage(rect, .optionOnScreenBelowWindow, $0, .bestResolution)
+        } ?? CGDisplayCreateImage(displayID)
+        guard let image = capture else {
             throw NSError(domain: "PointAndTell", code: 20, userInfo: [NSLocalizedDescriptionKey: "无法读取屏幕。请在系统偏好设置 → 安全性与隐私 → 屏幕录制中允许 Point & Tell，然后重新打开应用。"])
         }
-        let rect = CGDisplayBounds(displayID)
         let location = CGEvent(source: nil)?.location ?? .zero
         let point: NormalizedPoint? = rect.contains(location) ? NormalizedPoint(x: (location.x - rect.minX) / rect.width, y: (location.y - rect.minY) / rect.height) : nil
         return CapturedVisual(image: image, pointer: point)
@@ -110,12 +115,16 @@ final class DrawingOverlay: NSObject {
         self.completion = completion
         canvas = DrawingCanvas(image: image, frame: NSRect(origin: .zero, size: screen.frame.size))
         window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
-        window.level = .floating
+        window.level = NSWindow.Level(rawValue: RecordingToolbarPanel.recordingLevel.rawValue - 2)
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         window.contentView = canvas
         window.isReleasedWhenClosed = false
-        controls = NSPanel(contentRect: NSRect(x: screen.frame.midX - 255, y: screen.frame.maxY - 82, width: 510, height: 54), styleMask: [.titled], backing: .buffered, defer: false)
+        controls = NSPanel(contentRect: NSRect(x: screen.frame.midX - 255, y: screen.frame.maxY - 82, width: 510, height: 54), styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
         controls.title = "标注冻结截图 · 语音继续录制"
-        controls.level = .modalPanel
+        controls.level = NSWindow.Level(rawValue: RecordingToolbarPanel.recordingLevel.rawValue - 1)
+        controls.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
+        controls.hidesOnDeactivate = false
+        controls.canHide = false
         controls.isReleasedWhenClosed = false
         super.init()
         let row = NSStackView(views: [button("撤销", #selector(undo)), button("清空", #selector(clear)), button("保存并继续", #selector(done)), button("取消标注", #selector(cancel))])

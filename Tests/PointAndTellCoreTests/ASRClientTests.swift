@@ -20,11 +20,36 @@ final class ASRClientTests: XCTestCase {
         XCTAssertFalse(ASRProvider.integrationVerified)
     }
 
-    func testSSEEnabledAtExactlyOneMinute() throws {
-        let below = try ASRRequestBuilder.makeRequest(wav: ASRFixtures.wav(seconds: 59), apiKey: "offline-test-key")
-        let at = try ASRRequestBuilder.makeRequest(wav: ASRFixtures.wav(seconds: 60), apiKey: "offline-test-key")
-        XCTAssertEqual(below.value(forHTTPHeaderField: "X-DashScope-SSE"), "disable")
-        XCTAssertEqual(at.value(forHTTPHeaderField: "X-DashScope-SSE"), "enable")
+    func testFinalJSONIsRequestedForShortAndLongAudio() throws {
+        for seconds in [1, 59, 60, 180] {
+            let request = try ASRRequestBuilder.makeRequest(wav: ASRFixtures.wav(seconds: seconds), apiKey: "offline-test-key")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-DashScope-SSE"), "disable")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "application/json")
+            let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
+            XCTAssertEqual(body["model"] as? String, "qwen-audio-3.0-asr-flash")
+            XCTAssertNil(body["stream"])
+        }
+        XCTAssertEqual(ASRProvider.documentationURL.absoluteString, "https://www.qianwenai.com/models/qwen-audio-3.0-asr-flash")
+    }
+
+    func testTextOnlyPartialLastSentenceAndMissingWordTimingCannotCompleteAChunk() {
+        let cases = [ASRFixtures.missingTimingJSON, ASRFixtures.partialTimingJSON, ASRFixtures.fullTextJSON,
+            #"{"output":{"text":"Only text"}}"#,
+            #"{"output":{"sentence":{"text":"No words","begin_time":100,"end_time":1000,"sentence_end":true}}}"#,
+            ASRFixtures.json.replacingOccurrences(of: "\"fixed\":true", with: "\"fixed\":false"),
+            ASRFixtures.json.replacingOccurrences(of: "\"text\":\"world\"", with: "\"text\":\"incomplete\"")]
+        for body in cases {
+            let transport = ASRStubTransport()
+            transport.response = .success(ASRHTTPResponse(statusCode: 200, data: Data(body.utf8), contentType: "application/json"))
+            let done = expectation(description: "timestamp validation")
+            ASRClient(transport: transport).transcribe(wav: ASRFixtures.tinyWAV, apiKey: "offline-test-key") { result in
+                if case .failure(let error) = result { XCTAssertEqual(error as? ASRError, .incompleteTimestamps) }
+                else { XCTFail("Untimed/partially timed result must not become completed cached ASR") }
+                done.fulfill()
+            }
+            wait(for: [done], timeout: 2)
+            XCTAssertEqual(transport.requests.count, 1, "Never silently retry a billed request")
+        }
     }
 
     func testEmptyAndHeaderInjectionKeysRejected() {

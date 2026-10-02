@@ -16,7 +16,8 @@ final class ASRErrorTests: XCTestCase {
             (.invalidHTTPResponse, .transport), (.responseTooLarge, .transport),
             (.httpStatus(400, code: nil, requestID: nil), .http),
             (.provider(code: "InvalidParameter", requestID: nil), .provider),
-            (.malformedResponse, .responseParsing), (.noFinalSentences, .responseParsing)
+            (.malformedResponse, .responseParsing), (.noFinalSentences, .responseParsing),
+            (.incompleteTimestamps, .responseParsing)
         ]
         for (error, stage) in values {
             XCTAssertEqual(error.stage, stage)

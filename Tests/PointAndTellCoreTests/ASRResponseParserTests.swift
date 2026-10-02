@@ -6,7 +6,9 @@ final class ASRResponseParserTests: XCTestCase {
         let result = try parse(ASRFixtures.json)
         XCTAssertEqual(result.requestID, "11111111-1111-4111-8111-111111111111")
         XCTAssertEqual(result.sentences, [ASRSentence(text: "Hello world.", beginTimeMilliseconds: 760,
-                                                     endTimeMilliseconds: 3800, sentenceID: 1, channelID: 0)])
+                                                     endTimeMilliseconds: 3800, sentenceID: 1, channelID: 0,
+                                                     words: [ASRWord(text: "Hello", beginTimeMilliseconds: 760, endTimeMilliseconds: 1400),
+                                                             ASRWord(text: "world.", beginTimeMilliseconds: 1500, endTimeMilliseconds: 3800)])])
         XCTAssertTrue(result.sentences[0].hasCompleteTiming)
     }
 

@@ -6,7 +6,7 @@ import PointAndTellCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate, NSTextViewDelegate, NSTextFieldDelegate, NSMenuItemValidation {
     private var window: NSWindow!
-    private var toolbar: NSPanel!
+    private var toolbar: RecordingToolbarPanel!
     private let screenPicker = NSPopUpButton(frame: .zero, pullsDown: false)
     private let microphonePicker = NSPopUpButton(frame: .zero, pullsDown: false)
     private let microphoneLevel = NSLevelIndicator(frame: .zero)
@@ -29,7 +29,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private let cardInfo = NSTextField(labelWithString: "请选择一张卡片")
     private let apiKeyField = NSSecureTextField(string: "")
     private let workspaceTitle = NSTextField(labelWithString: "把想法讲清楚")
-    private let workspaceSubtitle = NSTextField(labelWithString: "录下画面和讲解，整理成可以直接分享的图文卡片。")
+    private let workspaceSubtitle = NSTextField(labelWithString: "录下画面和讲解，结束后自动转写成可以分享的图文卡片。")
     private let stepLabel = NSTextField(labelWithString: "01  录制讲解     →     02  转写与整理     →     03  导出分享")
     private var exportHTMLButton: NSButton!
     private var exportBundleButton: NSButton!
@@ -67,18 +67,86 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private var busy = false
     private var cancelRequested = false
     private var activeChunkID: UUID?
+    private var workflowReady = false
+    private var isTestMode = false
+    private var setupController: SetupWindowController?
+    private var automaticGate = AutomaticTranscriptionGate()
+    private var automaticTranscription = false
     private var hotKey: EventHotKeyRef?
     private var eventHandler: EventHandlerRef?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         makeMenu(); makeWindow(); makeToolbar(); installShortcut()
         recorder.onFailure = { [weak self] error in self?.recordingFailed(error) }
-        window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
-        if let index = CommandLine.arguments.firstIndex(of: "--smoke-test"), CommandLine.arguments.indices.contains(index + 1) { runUISmokeTest(directory: URL(fileURLWithPath: CommandLine.arguments[index + 1])) }
+        if let index = CommandLine.arguments.firstIndex(of: "--smoke-test"), CommandLine.arguments.indices.contains(index + 1) {
+            isTestMode = true; workflowReady = true; updateInterface()
+            window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+            runUISmokeTest(directory: URL(fileURLWithPath: CommandLine.arguments[index + 1])); return
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--audio-smoke-test"), CommandLine.arguments.indices.contains(index + 1) {
+            isTestMode = true
             AudioChunkerSmokeTest.run(directory: URL(fileURLWithPath: CommandLine.arguments[index + 1])) { result in
                 switch result { case .success(let evidence): print(evidence); exit(0); case .failure(let error): fputs("Audio smoke failed: \(error.localizedDescription)\n", stderr); exit(1) }
+            }; return
+        }
+        NSApp.activate(ignoringOtherApps: true)
+        showSetupPreferences(); setupController?.setLoading()
+        DispatchQueue.global(qos: .userInitiated).async { [weak self] in
+            let result = Result { try APIKeyStore.load() }
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                switch result {
+                case .success(let key):
+                    self.setupController?.restore(key: key)
+                    let granted = UserDefaults.standard.bool(forKey: SetupWindowController.consentPreference)
+                    if let key = key, UserDefaults.standard.bool(forKey: SetupWindowController.completedPreference),
+                       SetupWindowController.readiness(key: key, consent: granted).canEnterWorkspace {
+                        self.enterWorkspace(key: key)
+                    }
+                case .failure(let error): self.setupController?.restore(key: nil, error: error)
+                }
             }
+        }
+    }
+
+    func applicationDidBecomeActive(_ notification: Notification) {
+        guard !isTestMode, workflowReady, !busy, !recorder.isBusy else { return }
+        if !currentReadiness.canEnterWorkspace { showSetupPreferences() }
+    }
+
+    private var currentReadiness: WorkflowReadiness {
+        SetupWindowController.readiness(key: apiKeyField.stringValue,
+            consent: UserDefaults.standard.bool(forKey: SetupWindowController.consentPreference))
+    }
+    @objc private func showSetupPreferences() {
+        guard !busy, !recorder.isBusy, commitTiming() else { return }
+        workflowReady = false; updateInterface(); window.orderOut(nil)
+        if let setup = setupController { setup.showWindow(nil); setup.window?.makeKeyAndOrderFront(nil); return }
+        let setup = SetupWindowController(key: apiKeyField.stringValue,
+            consentGranted: UserDefaults.standard.bool(forKey: SetupWindowController.consentPreference)) { [weak self] key in
+                self?.enterWorkspace(key: key)
+            }
+        setupController = setup; setup.showWindow(nil); setup.window?.makeKeyAndOrderFront(nil)
+    }
+    private func enterWorkspace(key: String) {
+        guard SetupWindowController.readiness(key: key, consent: true).canEnterWorkspace else {
+            setupController?.refreshState(); return
+        }
+        apiKeyField.stringValue = key
+        UserDefaults.standard.set(true, forKey: SetupWindowController.consentPreference)
+        UserDefaults.standard.set(true, forKey: SetupWindowController.completedPreference)
+        workflowReady = true; refreshScreens(); refreshMicrophones(); updateInterface()
+        window.makeKeyAndOrderFront(nil)
+        setupController?.close(); setupController = nil
+        report("设置已就绪。新建录制，结束后自动转写并提取配图。")
+    }
+    private func refreshScreens() {
+        let oldIndex = screenPicker.indexOfSelectedItem
+        let oldID = screens.indices.contains(oldIndex) ? screens[oldIndex].deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber : nil
+        screens = NSScreen.screens; screenPicker.removeAllItems()
+        for (index, screen) in screens.enumerated() {
+            screenPicker.addItem(withTitle: "\(index + 1) · \(screen.localizedName)")
+            if screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber == oldID { screenPicker.selectItem(at: index) }
         }
     }
 
@@ -135,9 +203,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                           self.exportHTMLButton.isEnabled && self.exportBundleButton.isEnabled, self.emptyContainer.isHidden,
                           let icon = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
                           NSImage(contentsOf: icon) != nil else { exit(2) }
+                    try self.verifySetupUI(directory: directory)
                     self.window.makeFirstResponder(self.table)
                     try render("window", width: 1080, height: 760)
                     try render("review-dark-compact", width: 980, height: 680, dark: true)
+                    self.project?.asrChunks = [ASRChunk(relativePath: "audio/legacy.wav", startSeconds: 0,
+                        durationSeconds: 10, state: .complete, sentences: [TranscriptSegment(text: "旧的无时间戳结果")])]
+                    self.updateInterface()
+                    guard self.transcribeButton.title == "重新转写 · 补齐时间戳" else { exit(14) }
+                    self.project?.asrChunks = []; self.updateInterface()
                     // A timing draft follows its card across a selection change;
                     // a card without a selected image must not show someone else's.
                     self.startField.stringValue = "3.500"; self.timingDirty = true
@@ -162,7 +236,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     self.timerLabel.stringValue = "00:24"
                     self.microphoneLabel.stringValue = "内建麦克风 · −22 dBFS"
                     self.microphoneLevel.doubleValue = -22
-                    self.toolbar.orderFrontRegardless()
+                    self.toolbar.showForRecording(on: NSScreen.main)
+                    guard self.toolbar.isVisible, self.toolbar.recordingVisible,
+                          self.toolbar.level == RecordingToolbarPanel.recordingLevel,
+                          !self.toolbar.hidesOnDeactivate, !self.toolbar.canHide,
+                          !self.toolbar.canBecomeKey, !self.toolbar.canBecomeMain,
+                          self.toolbar.collectionBehavior.contains(.canJoinAllSpaces),
+                          self.toolbar.collectionBehavior.contains(.fullScreenAuxiliary) else { exit(21) }
+                    self.window.orderFrontRegardless()
+                    NSWorkspace.shared.notificationCenter.post(name: NSWorkspace.activeSpaceDidChangeNotification, object: nil)
+                    guard self.toolbar.isVisible, NSApp.keyWindow !== self.toolbar else { exit(22) }
                     if let palette = self.toolbar.contentView {
                         palette.layoutSubtreeIfNeeded()
                         guard self.stopButton.frame.maxX <= palette.bounds.width else { exit(12) }
@@ -171,12 +254,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                             try bitmap.representation(using: .png, properties: [:])?.write(to: directory.appendingPathComponent("recording-toolbar.png"))
                         }
                     }
-                    self.toolbar.orderOut(nil)
+                    self.toolbar.hideAfterRecording()
+                    guard !self.toolbar.isVisible, !self.toolbar.recordingVisible else { exit(23) }
+                    print("TOOLBAR_SMOKE_OK · persistent nonactivating HUD, all Spaces/full-screen flags, stopped cleanup")
                     print("UI_SMOKE_OK · light/dark, compact layout, empty states, save and busy controls")
                     exit(0)
                 } catch { fputs("UI smoke render failed: \(error.localizedDescription)\n", stderr); exit(4) }
             }
         } catch { fputs("UI smoke fixture failed\n", stderr); exit(1) }
+    }
+
+    /// Exercises onboarding without asking for real OS permission, writing a
+    /// credential, uploading audio, or persisting consent on the CI machine.
+    private func verifySetupUI(directory: URL) throws {
+        workflowReady = false; updateInterface(); window.orderOut(nil)
+        guard !startButton.isEnabled, !actionEnabled(#selector(openProject)), !window.isVisible else { exit(15) }
+        var permissionsGranted = false
+        var rejectSave = true
+        var completions = 0
+        let setup = SetupWindowController(key: "", consentGranted: false, permissions: { key, consent in
+            WorkflowReadiness(screenPermission: permissionsGranted, microphonePermission: permissionsGranted,
+                hasDisplay: true, hasMicrophone: true, hasAPIKey: WorkflowReadiness.validAPIKey(key), automaticUploadConsent: consent)
+        }, saveKey: { _, callback in
+            callback(rejectSave ? .failure(APIKeyStore.StoreError(status: -25308)) : .success(()))
+        }, completion: { _ in completions += 1 })
+        setup.showWindow(nil); setup.window?.makeKeyAndOrderFront(nil)
+        func render(_ name: String) throws {
+            guard let view = setup.window?.contentView else { exit(16) }
+            view.layoutSubtreeIfNeeded()
+            let bounds = setup.continueButton.convert(setup.continueButton.bounds, to: view)
+            guard view.bounds.contains(bounds), !view.hasAmbiguousLayout,
+                  let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(17) }
+            view.cacheDisplay(in: view.bounds, to: bitmap)
+            try bitmap.representation(using: .png, properties: [:])?.write(to: directory.appendingPathComponent(name + ".png"))
+        }
+        guard !setup.continueButton.isEnabled else { exit(18) }
+        try render("setup-required")
+        permissionsGranted = true; setup.keyField.stringValue = "offline-setup-fixture-key"; setup.refreshState()
+        guard !setup.continueButton.isEnabled else { exit(19) } // Consent still absent.
+        setup.consent.state = .on; setup.refreshState()
+        guard setup.continueButton.isEnabled else { exit(20) }
+        try render("setup-ready")
+        setup.finishSetup()
+        guard completions == 0, setup.continueButton.isEnabled else { exit(21) } // Keychain failure keeps gate closed.
+        rejectSave = false; setup.finishSetup(); setup.finishSetup()
+        guard completions == 1 else { exit(22) }
+        workflowReady = true; updateInterface(); window.makeKeyAndOrderFront(nil); setup.close()
+        print("SETUP_SMOKE_OK · permissions/key/consent gate, keychain failure, one completion, no real credentials or permissions")
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -204,6 +328,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private func makeMenu() {
         let menu = NSMenu(); let root = NSMenuItem(); menu.addItem(root)
         let app = NSMenu(); app.addItem(withTitle: "关于 Point & Tell", action: #selector(about), keyEquivalent: "")
+        app.addItem(withTitle: "权限与转写设置…", action: #selector(showSetupPreferences), keyEquivalent: ",").target = self
         app.addItem(.separator()); app.addItem(withTitle: "退出 Point & Tell", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"); root.submenu = app
         let fileItem = NSMenuItem(); menu.addItem(fileItem); let file = NSMenu(title: "文件")
         for (title, action, key) in [("新建录制…", #selector(startRecording), "n"), ("打开项目…", #selector(openProject), "o"), ("保存卡片", #selector(saveCard), "s"), ("导出 HTML…", #selector(exportHTML), "e")] {
@@ -270,14 +395,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         let playback = button("试听录屏", #selector(playRecording), idleOnly: true); decorate(playback, symbol: "play.circle")
         apiKeyField.placeholderString = "输入阿里云 API Key"
         apiKeyField.font = .systemFont(ofSize: 12); apiKeyField.setAccessibilityLabel("阿里云转写 API Key")
-        apiKeyField.toolTip = "密钥仅在本次运行内存中保留，不写入项目或导出文件。"
+        apiKeyField.toolTip = "密钥保存在本机钥匙串，不写入项目、日志或导出文件。"
         transcribeButton = button("开始转写", #selector(transcribe), idleOnly: true); decorate(transcribeButton, symbol: "waveform")
         cancelASRButton = button("取消转写", #selector(cancelASR)); cancelASRButton.isEnabled = false
         cancelASRButton.isHidden = true
+        let settingsButton = button("权限与转写设置…", #selector(showSetupPreferences), idleOnly: true)
+        settingsButton.controlSize = .small
         let transcription = InterfaceStyle.column([
             sectionHeading("语音转文字", symbol: "waveform"),
-            caption("录制后先试听，再转写。"), apiKeyField, transcribeButton, cancelASRButton,
-            caption("仅转写时上传音频；视频和截图留在本地。密钥仅本次有效。")
+            caption("Qwen Audio 3.0 · 句 / 词时间戳"), caption("结束录制后自动转写"), transcribeButton, cancelASRButton,
+            settingsButton, caption("API Key 由本机钥匙串保管。仅上传音频，视频和截图保留在本地。")
         ], spacing: 8)
         let reveal = button("在 Finder 中显示", #selector(revealProject), idleOnly: true)
         reveal.controlSize = .small; decorate(reveal, symbol: "folder")
@@ -429,8 +556,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         button.setAccessibilityLabel(button.title)
     }
     private func makeToolbar() {
-        toolbar = NSPanel(contentRect: NSRect(x: 60, y: 60, width: 790, height: 60), styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
-        toolbar.title = "Point & Tell · 录制中"; toolbar.level = .floating; toolbar.isFloatingPanel = true; toolbar.hidesOnDeactivate = false; toolbar.isReleasedWhenClosed = false
+        toolbar = RecordingToolbarPanel()
         stopButton = button("结束录制", #selector(stopRecording)); decorate(stopButton, symbol: "stop.fill")
         stopButton.contentTintColor = .systemRed
         timerLabel.font = .monospacedDigitSystemFont(ofSize: 20, weight: .medium)
@@ -444,7 +570,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         microphoneLabel.lineBreakMode = .byTruncatingMiddle
         let controls = row([InterfaceStyle.symbol("record.circle.fill", size: 14), timerLabel, microphoneLabel, microphoneLevel, button("标记 ⌃⌥M", #selector(mark)), button("画笔", #selector(pen)), stopButton]); controls.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12); toolbar.contentView = controls
     }
-    @objc private func about() { let a = NSAlert(); a.messageText = "Point & Tell 0.2.0"; a.informativeText = "适用于 macOS 11+ 的轻量屏幕讲解工具。\n录屏和标注本地保存；转写按需上传音频。\n这是早期版本，真实阿里云接口与旧款 Mac 性能需要设备验证。"; a.runModal() }
+    @objc private func about() { let a = NSAlert(); a.messageText = "Point & Tell " + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""); a.informativeText = "适用于 macOS 11+ 的轻量屏幕讲解工具。\n录屏和标注本地保存；完成首次设置后，录制结束会自动上传音频转写。\n语音服务使用 qwen-audio-3.0-asr-flash。"; a.runModal() }
     private func setBusy(_ value: Bool, status: String? = nil) {
         busy = value
         if value { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
@@ -456,6 +582,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private func report(_ text: String) { statusLabel.stringValue = text; statusLabel.toolTip = text }
     private func actionEnabled(_ action: Selector?) -> Bool {
         guard !busy, !recorder.isBusy else { return false }
+        if action == #selector(showSetupPreferences) { return true }
+        guard workflowReady else { return false }
         switch action {
         case #selector(startRecording), #selector(openProject), #selector(refreshMicrophones): return true
         case #selector(revealProject), #selector(addCard): return project != nil
@@ -481,15 +609,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         exportHTMLButton.isEnabled = actionEnabled(#selector(exportHTML))
         exportBundleButton.isEnabled = actionEnabled(#selector(exportBundle))
         cancelASRButton.isHidden = !cancelASRButton.isEnabled
-        transcribeButton.title = (project?.asrChunks.contains { $0.state == .failed || $0.state == .pending } ?? false) ? "继续 / 重试转写" : "开始转写"
+        if project?.asrChunks.contains(where: { $0.needsTimestampRetry }) == true {
+            transcribeButton.title = "重新转写 · 补齐时间戳"
+        } else {
+            transcribeButton.title = (project?.asrChunks.contains { $0.state == .failed || $0.state == .pending } ?? false) ? "继续 / 重试转写" : "开始转写"
+        }
+        transcribeButton.toolTip = "qwen-audio-3.0-asr-flash · 最终 JSON 响应；校验完整句/词时间戳后才标记完成。"
         let count = project?.reviewCards.count ?? 0
         cardCount.stringValue = "卡片 · \(count)"
         workspaceTitle.stringValue = project?.title ?? "把想法讲清楚"
         workspaceTitle.toolTip = project?.title
-        workspaceSubtitle.stringValue = project.map { "\(count) 张讲解卡片 · \($0.anchors.count) 张截图 · 本地项目" } ?? "录下画面和讲解，整理成可以直接分享的图文卡片。"
+        workspaceSubtitle.stringValue = project.map { "\(count) 张讲解卡片 · \($0.anchors.count) 张截图 · 本地项目" } ?? "录下画面和讲解，结束后自动转写成可以分享的图文卡片。"
         reviewContent.isHidden = count == 0; emptyContainer.isHidden = count > 0
         emptyTitle.stringValue = project == nil ? "指向画面，说出想法" : "录制已就位，开始整理"
-        emptyDescription.stringValue = project == nil ? "录制时标记重点、圈画截图。\n结束后，把口述变成清晰的图文反馈。" : "先试听录屏，再用左侧转写生成卡片。\n也可以手动添加文字和配图。"
+        emptyDescription.stringValue = project == nil ? "录制时标记重点、圈画截图。\n结束后，把口述变成清晰的图文反馈。" : "录制结束后自动转写。若未完成，可从左侧继续或重试。\n原始录屏始终保留，也可手动整理。"
         emptyAction.title = project == nil ? "开始第一次录制" : "添加第一张卡片"
         emptyAction.action = project == nil ? #selector(startRecording) : #selector(addCard)
         emptyAction.setAccessibilityLabel(emptyAction.title)
@@ -512,6 +645,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
 
     @objc private func startRecording() {
         guard !busy, !recorder.isRecording else { return }
+        guard isTestMode || (workflowReady && currentReadiness.canEnterWorkspace) else { showSetupPreferences(); return }
+        refreshScreens(); refreshMicrophones()
         guard commitTiming() else { return }
         closePlayback()
         let panel = NSSavePanel(); panel.title = "保存新的本地录制项目"; panel.nameFieldStringValue = "Point-and-Tell-\(Int(Date().timeIntervalSince1970)).pointtell"; panel.canCreateDirectories = true
@@ -525,12 +660,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             selectedDisplay = id.uint32Value
             let fps = fpsPicker.indexOfSelectedItem == 0 ? 5 : 10
             project?.recording = RecordingInfo(relativePath: "recording.mov", durationSeconds: 0, displayID: selectedDisplay, fps: fps)
-            project?.captureState = .recording; try persist(); setBusy(true, status: "正在请求录屏与麦克风权限…")
+            project?.captureState = .recording; try persist(); setBusy(true, status: "正在启动屏幕与麦克风录制…")
             recorder.start(displayID: selectedDisplay, fps: fps, microphoneID: microphonePicker.selectedItem?.representedObject as? String, outputURL: folder.appendingPathComponent("recording.mov")) { [weak self] result in
                 guard let self = self else { return }
                 switch result {
                 case .success:
-                    self.window.orderOut(nil); self.toolbar.orderFrontRegardless(); self.stopButton.isEnabled = true
+                    if let id = self.project?.id { self.automaticGate.arm(projectID: id) }
+                    self.window.orderOut(nil)
+                    let screen = self.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == self.selectedDisplay }
+                    self.toolbar.showForRecording(on: screen); self.stopButton.isEnabled = true
                     self.updateMicrophoneMeter()
                     self.timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
                         guard let self = self else { return }; let seconds = Int(self.recorder.elapsedSeconds); self.timerLabel.stringValue = String(format: "%02d:%02d", seconds / 60, seconds % 60); self.updateMicrophoneMeter()
@@ -547,7 +685,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         project?.captureState = .finishing; project?.recording?.durationSeconds = recorder.elapsedSeconds
         do { try persist() } catch { fail(error) }
         recorder.stop { [weak self] result in
-            guard let self = self else { return }; self.toolbar.orderOut(nil); self.window.makeKeyAndOrderFront(nil)
+            guard let self = self else { return }; self.toolbar.hideAfterRecording(); self.window.makeKeyAndOrderFront(nil)
             switch result {
             case .success(let movie):
                 self.setBusy(true, status: "录屏已保存，正在本地检查音轨和实际解码电平…")
@@ -563,12 +701,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                                 let placeholders = self.project?.anchors.map { ReviewCard(text: "", frameIDs: [$0.id], startSeconds: $0.timestamp, endSeconds: $0.timestamp) } ?? []
                                 self.project?.reviewCards = placeholders
                             }
-                            do { try self.persist() } catch { self.fail(error) }
+                            do { try self.persist() } catch {
+                                self.automaticGate.cancel(); self.setBusy(false, status: "保存项目失败，自动转写未启动；录音已保留。")
+                                self.fail(error); return
+                            }
+                            let ready = self.workflowReady && self.currentReadiness.canEnterWorkspace
                             let message = report.suspectedSilence
                                 ? "录音检查：电平很低，可能是静音。请先本地试听，再检查所选麦克风和系统输入音量。"
-                                : "录音检查通过：存在可解码音频。请先本地试听，确认能听见讲话后再转写。"
+                                : (ready ? "录音检查通过，准备自动转写。" : "权限、设备或转写设置发生变化，自动转写未启动。请完成设置后手动继续转写。")
                             self.setBusy(false, status: message + " " + report.safeSummary); self.refresh()
+                            if let id = self.project?.id,
+                               self.automaticGate.consume(projectID: id, usableAudio: true,
+                                   needsAudioReview: report.suspectedSilence, ready: ready) {
+                                self.beginTranscription(automatic: true, sourceInspection: report)
+                            }
                         case .failure(let error):
+                            self.automaticGate.cancel()
                             self.project?.captureState = .interrupted; try? self.persist()
                             self.setBusy(false, status: "录音检查失败：没有可用音频，暂不能转写。录屏和截图仍保留。")
                             self.fail(error); self.refresh()
@@ -580,7 +728,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         }
     }
     private func recordingFailed(_ error: Error) {
-        timer?.invalidate(); timer = nil; drawing?.cancel(); drawing = nil; toolbar.orderOut(nil); window.makeKeyAndOrderFront(nil)
+        automaticGate.cancel()
+        timer?.invalidate(); timer = nil; drawing?.cancel(); drawing = nil; toolbar.hideAfterRecording(); window.makeKeyAndOrderFront(nil)
         project?.recording?.durationSeconds = recorder.elapsedSeconds
         project?.captureState = .interrupted; try? persist(); setBusy(false, status: "录制中断。已写入的文件保留在项目文件夹，可尝试重新打开。"); fail(error)
     }
@@ -647,12 +796,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     @objc private func pen() { captureAnchor(draw: true) }
     private func captureAnchor(draw: Bool) {
         guard recorder.isRecording, !pendingScreenshot, drawing == nil, let store = store else { return }
-        pendingScreenshot = true; toolbar.orderOut(nil)
+        pendingScreenshot = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
             guard let self = self else { return }; defer { self.pendingScreenshot = false }
             guard self.recorder.isRecording else { return }
             do {
-                let visual = try VisualCapture.screen(displayID: self.selectedDisplay); let timestamp = self.recorder.elapsedSeconds
+                let visual = try VisualCapture.screen(displayID: self.selectedDisplay, belowWindowID: CGWindowID(self.toolbar.windowNumber)); let timestamp = self.recorder.elapsedSeconds
                 if draw, let screen = self.screens.first(where: { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == self.selectedDisplay }) {
                     self.drawing = DrawingOverlay(image: visual.image, screen: screen) { [weak self] result in
                         guard let self = self else { return }; self.drawing = nil
@@ -689,13 +838,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     }
     @objc private func revealProject() { if let url = store?.folderURL { NSWorkspace.shared.activateFileViewerSelecting([url]) } }
 
-    @objc private func transcribe() {
+    @objc private func transcribe() { beginTranscription(automatic: false) }
+    private func beginTranscription(automatic: Bool, sourceInspection: AudioInspectionReport? = nil) {
+        guard workflowReady else { showSetupPreferences(); return }
         guard !busy, commitTiming(), let store = store, let recording = project?.recording else { return }
         let key = apiKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else { report("请先输入本次转写使用的 API Key。密钥不会保存到项目、日志或导出文件。"); return }
+        guard WorkflowReadiness.validAPIKey(key) else { showSetupPreferences(); return }
+        guard !automatic || UserDefaults.standard.bool(forKey: SetupWindowController.consentPreference) else { return }
+        automaticTranscription = automatic
         closePlayback(); cancelRequested = false; silenceUploadApproved = false
         captureStateBeforeASR = project?.captureState
         cancelASRButton.isEnabled = true; setBusy(true, status: "音频检查：正在本地检查录音，尚未上传…")
+        if let inspection = sourceInspection {
+            confirmAndPrepareTranscription(apiKey: key, store: store, recording: recording, source: inspection); return
+        }
         if project?.asrChunks.isEmpty == false {
             // Saved WAVs are checked individually. A damaged source MOV must
             // not discard a valid saved WAV retry.
@@ -721,10 +877,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private func confirmAndPrepareTranscription(apiKey: String, store: ProjectStore, recording: RecordingInfo, source: AudioInspectionReport?) {
         let alert = NSAlert(); alert.messageText = "将本项目的音频发送给阿里云转写？"
         let isQuiet = source?.suspectedSilence == true
-        alert.informativeText = (isQuiet ? "本地检查发现电平很低，可能是静音。此检查只测幅度，不能判断是否有人声；建议取消并先试听。\n\n" : "") + "接收方：maas.qianwenaiapi.com\n发送内容：本项目麦克风录音，按约 3 分钟分片。视频和截图不会上传。服务商可能按用量计费。\n该接口尚未通过真实付费请求验证。"
+        let retryCount = project?.asrChunks.filter { $0.needsTimestampRetry }.count ?? 0
+        alert.informativeText = (isQuiet ? "本地检查发现电平很低，可能是静音。此检查只测幅度，不能判断是否有人声；建议取消并先试听。\n\n" : "") + "接收方：maas.qianwenaiapi.com\n模型：qwen-audio-3.0-asr-flash（最终 JSON，句/词时间戳）\n发送内容：本项目麦克风录音，按约 3 分钟分片。视频和截图不会上传。服务商可能按用量计费。\n该接口尚未通过真实付费请求验证。"
+        if retryCount > 0 {
+            alert.informativeText += "\n\n本次会重新发送 \(retryCount) 个缺少完整时间戳的已完成片段，可能再次计费。新结果通过校验后才替换旧结果；手工编辑文字和已选截图会保留，未编辑的空配图卡片会重建。"
+        }
         alert.addButton(withTitle: isQuiet ? "仍发送低电平音频并转写" : "发送音频并转写"); alert.addButton(withTitle: "取消")
-        guard alert.runModal() == .alertFirstButtonReturn else { finishASR(cancelled: true); return }
+        if !automaticTranscription || isQuiet || retryCount > 0 {
+            guard alert.runModal() == .alertFirstButtonReturn else { finishASR(cancelled: true); return }
+        }
         silenceUploadApproved = isQuiet
+        project?.queueIncompleteTimestampChunks()
+        do { try persist() } catch { finishASR(cancelled: false); fail(error); return }
         if project?.asrChunks.isEmpty == false { processNextChunk(apiKey: apiKey); return }
         do {
             let movie = try store.resolveRelativePath(recording.relativePath, requireExisting: true)
@@ -766,6 +930,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                 do {
                     let (inspection, wav) = try result.get()
                     if inspection.suspectedSilence && !self.silenceUploadApproved {
+                        if self.automaticTranscription {
+                            self.finishASR(cancelled: true)
+                            self.report("自动转写已暂停：片段 \(chunk.index + 1) 电平很低。请先试听，再手动继续转写。录音和已完成结果均已保留。")
+                            return
+                        }
                         let alert = NSAlert(); alert.messageText = "片段 \(chunk.index + 1) 电平很低，仍要上传吗？"
                         alert.informativeText = inspection.safeSummary + "\n这不是人声检测。安静的讲话也可能触发提示；建议先取消并本地试听。继续会允许本项目本次转写中的低电平片段上传，并可能产生费用。"
                         alert.addButton(withTitle: "本次继续发送低电平片段"); alert.addButton(withTitle: "取消并试听")
@@ -788,15 +957,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         do {
             try persist()
             let completed = project?.asrChunks.filter { $0.state == .complete }.count ?? 0
-            report("HTTP 转写：片段 \(chunk.index + 1) / \(project?.asrChunks.count ?? 0) · 已完成 \(completed)。等待服务商返回，没有估算进度。")
+            report("Qwen Audio 3.0 转写：片段 \(chunk.index + 1) / \(project?.asrChunks.count ?? 0) · 已完成 \(completed)。等待服务商返回，没有估算进度。")
             asrTask = asr.transcribe(wav: wav, apiKey: apiKey) { [weak self] result in
                 guard let self = self else { return }; self.asrTask = nil; self.activeChunkID = nil
                 guard self.project?.asrChunks.indices.contains(index) == true else { return }
                 switch result {
                 case .success(let sentences):
-                    self.project?.asrChunks[index].sentences = sentences.map { sentence in
-                        sentence.transcriptSegment(chunkOffset: chunk.startSeconds)
-                    }; self.project?.asrChunks[index].state = .complete
+                    do {
+                        try self.project?.acceptTranscription(sentences.map { $0.transcriptSegment(chunkOffset: chunk.startSeconds) }, forChunkAt: index)
+                    } catch {
+                        self.project?.asrChunks[index].state = .failed
+                        self.project?.asrChunks[index].errorMessage = ASRError.safeDescription(for: error)
+                        self.project?.asrChunks[index].diagnostic = ASRDiagnostic(error: error)
+                        try? self.persist(); self.finishASR(cancelled: false); self.fail(error); return
+                    }
                 case .failure(let error):
                     self.project?.asrChunks[index].state = self.cancelRequested ? .pending : .failed
                     let safe = ASRError.safeDescription(for: error)
@@ -811,6 +985,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     }
     @objc private func cancelASR() { cancelRequested = true; asrTask?.cancel(); if asrTask == nil { report("将在当前本地步骤结束后取消；已完成的音频片段保留。") } }
     private func finishASR(cancelled: Bool) {
+        automaticTranscription = false
         let completed = project?.asrChunks.sorted(by: { $0.index < $1.index }).flatMap { $0.sentences } ?? []
         project?.transcripts = completed
         let existing = Set(project?.reviewCards.compactMap { $0.transcriptID } ?? [])
@@ -856,6 +1031,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                 self.project?.reviewCards.removeAll { $0.transcriptID == nil && $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 self.project?.reviewCards.append(contentsOf: suggested)
                 self.project?.captureState = self.captureStateBeforeASR ?? .complete; do { try self.persist() } catch { self.fail(error) }
+                self.automaticTranscription = false
                 self.cancelASRButton.isEnabled = false; self.setBusy(false, status: warning.map { "转写完成，但部分截图失败：\($0)。请手动取图后导出。" } ?? "转写与配图已准备好。请校对文字、时间和图片，再导出。无时间戳的句子需要手动配图。")
                 self.refresh(); if !(self.project?.reviewCards.isEmpty ?? true) { self.table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false) }
             }
