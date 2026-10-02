@@ -1,5 +1,17 @@
 # Download Point & Tell
 
+## v0.3.3 · Delete cards and consistent primary buttons · Universal · macOS 11.0+
+
+[Download v0.3.3](v0.3.3/Point-and-Tell-v0.3.3-macOS-universal.zip?raw=true)
+
+Delete selected cards from the list or Edit menu, with confirmation and save-before-removal behavior. Deletions survive reopening, export and transcription retries; deleting the final card does not restore the original transcript. New Recording and Export Standalone HTML use solid forest-teal backgrounds and white labels/icons in light and dark mode.
+
+- Intel x86_64 + Apple Silicon arm64; minimum macOS 11.0
+- [Exact source commit](https://github.com/kejun/point-and-tell/commit/d17e029e66a0a5c3a02c1490945ac177294fade2) · [native build/test run](https://github.com/kejun/point-and-tell/actions/runs/37027870224)
+- 146 core tests per architecture; native deletion/selection/save-failure checks, audio chain, card/pen/HUD/UI and WebKit export checks
+- [SHA-256](v0.3.3/Point-and-Tell-v0.3.3-macOS-universal.zip.sha256) · [build manifest](v0.3.3/build.json) · [behavior and screenshots](../docs/CARD-DELETION.md)
+- Ad-hoc signed, not Apple-notarized. Original media remains local. Physical macOS 11 recording and paid ASR still require device verification.
+
 ## v0.3.2 · Recording startup compatibility and diagnostics · Universal · macOS 11.0+
 
 [Download v0.3.2](v0.3.2/Point-and-Tell-v0.3.2-macOS-universal.zip?raw=true)
