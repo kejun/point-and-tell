@@ -4,15 +4,15 @@
 
 Record your screen while explaining what should change. Mark the important moments, draw on a frozen screenshot, then turn your explanation into editable text-and-image cards and an offline HTML file.
 
-**New in v0.3.0:** a required first-run setup for screen/microphone permissions and a Keychain-stored API key, automatic transcription after recording, complete Qwen sentence/word timestamp validation, and a persistent frontmost recording toolbar. See [setup and automatic workflow](docs/FIRST-RUN.md) and [ASR configuration](docs/QWEN-ASR.md).
+**New in v0.3.1:** the review workspace now creates the same timestamp-and-screenshot cards as the HTML export, including automatically regrouping unchanged older projects without re-uploading audio. Pen mode now uses a dedicated input panel for first-click drawing, drag strokes, undo/clear, Enter to save and Escape to cancel, while the recording toolbar stays visible. Choosing an image in the card picker now saves it immediately and replaces the previous image, with no extra Add/Replace buttons. See [card and pen fixes](docs/CARDS-AND-PEN.md).
 
 <img src="docs/screenshots/review-light.png" width=600>
 
-**Native macOS 11+, Intel + Apple Silicon. Preview v0.3.0.** No Electron, local language model, account, server, or database.
+**Native macOS 11+, Intel + Apple Silicon. Preview v0.3.1.** No Electron, local language model, account, server, or database.
 
 ## Get the app
 
-[Download v0.3.0 Universal](releases/v0.3.0/Point-and-Tell-v0.3.0-macOS-universal.zip?raw=true) for Intel and Apple Silicon. The application ZIP, SHA-256 checksum and exact source/build manifest are committed under [releases/v0.3.0](releases/v0.3.0). See the [release notes](releases/README.md) for verification and rollback details.
+[Download v0.3.1 Universal](releases/v0.3.1/Point-and-Tell-v0.3.1-macOS-universal.zip?raw=true) for Intel and Apple Silicon. The application ZIP, SHA-256 checksum and exact source/build manifest are committed under [releases/v0.3.1](releases/v0.3.1). See the [release notes](releases/README.md) for verification and rollback details.
 
 The app is ad-hoc signed, **not Apple-notarized**. On macOS 11, extract the ZIP, move the app to Applications, then use Finder → right-click → Open if Gatekeeper asks. Do not disable system security. No Apple Developer account is required to build locally.
 

@@ -62,10 +62,11 @@ public enum FrameMatcher {
     }
 
     public static func suggestCards(for transcripts: [TranscriptSegment], anchors: [VisualAnchor]) -> [ReviewCard] {
-        transcripts.map { segment in
-            ReviewCard(transcriptID: segment.id, text: segment.text,
+        transcripts.flatMap { segment in
+            let card = ReviewCard(transcriptID: segment.id, text: segment.text,
                        frameIDs: matchingFrameIDs(for: segment, anchors: anchors),
                        startSeconds: segment.startSeconds, endSeconds: segment.endSeconds)
+            return ReviewCardGrouping.cards(from: card, transcript: segment, anchors: anchors)
         }
     }
 }

@@ -1,6 +1,6 @@
 # Timestamp-aligned exports
 
-HTML and Markdown share one alignment plan, also included as `cards[].moments` in export JSON schema 2. Source project schema remains backward compatible.
+HTML and Markdown share one alignment plan, also included as `cards[].moments` in export JSON schema 2. Source project schema remains backward compatible. Since v0.3.1, these same groups are materialized as editable review cards before export; an unchanged old project is regrouped locally when opened. Editor and export therefore show the same card boundaries.
 
 - Retain final provider word timestamps in milliseconds, convert to seconds, and apply the audio chunk offset once to sentences and words. Final SSE corrections replace earlier results with the same sentence identity.
 - Within each reviewed card, show the selected screenshots chronologically with their corresponding speech beside them (stacked on narrow screens). Keep each word whole; use its time midpoint to select the closest screenshot. Equidistant words go to the later screenshot. Equal-time screenshots share a passage.

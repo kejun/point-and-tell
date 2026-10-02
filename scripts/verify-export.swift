@@ -29,7 +29,8 @@ final class ExportPreview: NSObject, WKNavigationDelegate {
         web.evaluateJavaScript("""
             (() => {
                 const groups = [...document.querySelectorAll('.moment')];
-                if (groups.length !== 2) return false;
+                if (groups.length !== 2 || document.querySelectorAll('.card').length !== 2) return false;
+                if (![...document.querySelectorAll('.card')].every(c => c.querySelectorAll('.moment').length === 1)) return false;
                 if (groups[0].querySelector('.transcript').textContent !== '请查看右上角的按钮。') return false;
                 if (groups[1].querySelector('.transcript').textContent !== '然后确认保存后的状态。') return false;
                 if (!groups.every(g => {const i=g.querySelector('img'); return i && i.complete && i.naturalWidth>0;})) return false;

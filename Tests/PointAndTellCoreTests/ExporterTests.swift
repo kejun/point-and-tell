@@ -51,7 +51,8 @@ final class ExporterTests: XCTestCase {
                           markdown.range(of: "第二步。")!.lowerBound)
         let json = try JSONSerialization.jsonObject(with: Data(contentsOf: destination.appendingPathComponent("project.json"))) as! [String: Any]
         let cards = json["cards"] as! [[String: Any]]
-        let moments = cards[0]["moments"] as! [[String: Any]]
+        XCTAssertEqual(cards.count, 2)
+        let moments = cards.flatMap { $0["moments"] as! [[String: Any]] }
         XCTAssertEqual(moments.map { $0["text"] as! String }.joined(), transcript.text)
         XCTAssertEqual(moments[1]["startSeconds"] as? Double, 8.003)
     }
