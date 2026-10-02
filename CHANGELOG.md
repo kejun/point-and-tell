@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.2.0 — Native workspace and app identity
+
+- Ship the selected forest-teal card icon in the application bundle; retain the 1024px master and Xcode icon set under Resources/Brand.
+- Replace the dense control sheet with a native sidebar, numbered card list, focused editor, preview and export menu.
+- Add onboarding and empty-project states, semantic light/dark colors, scrollable settings/editor, accessible labels and File menu shortcuts.
+- Show saved text feedback; validate and save timing drafts before changing cards, opening/creating projects or exporting.
+- Keep unassigned cards' previews empty and distinguish previewed images from assigned export images.
+- Preserve the v0.1.1 capture, local audio checks and opt-in transcription pipeline.
+- Extend native smoke evidence to welcome/review/empty states and dark compact layouts.
+
 ## 0.1.1 — 2026-10-02
 
 Audio-chain diagnostics and capture reliability update.

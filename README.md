@@ -1,6 +1,10 @@
 # Point & Tell · 指指点点
 
+<img src="Resources/Brand/AppIcon-1024.png" width="96" height="96" alt="Point & Tell app icon">
+
 Record your screen while explaining what should change. Mark the important moments, draw on a frozen screenshot, then turn your explanation into editable text-and-image cards and an offline HTML file.
+
+**Source preview: v0.2.0** · redesigned native workspace. The downloadable release below remains v0.1.1 until a verified v0.2.0 archive is published. See [UI design](docs/UI-DESIGN.md).
 
 **Native macOS 11+, Intel + Apple Silicon. Preview v0.1.1.** No Electron, local language model, account, server, or database.
 

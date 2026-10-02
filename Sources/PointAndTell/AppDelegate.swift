@@ -4,7 +4,7 @@ import AVFoundation
 import AVKit
 import PointAndTellCore
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate, NSTextViewDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate, NSTextViewDelegate, NSTextFieldDelegate, NSMenuItemValidation {
     private var window: NSWindow!
     private var toolbar: NSPanel!
     private let screenPicker = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -28,6 +28,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private let preview = NSImageView()
     private let cardInfo = NSTextField(labelWithString: "请选择一张卡片")
     private let apiKeyField = NSSecureTextField(string: "")
+    private let workspaceTitle = NSTextField(labelWithString: "把想法讲清楚")
+    private let workspaceSubtitle = NSTextField(labelWithString: "录下画面和讲解，整理成可以直接分享的图文卡片。")
+    private let stepLabel = NSTextField(labelWithString: "01  录制讲解     →     02  转写与整理     →     03  导出分享")
+    private let exportPicker = NSPopUpButton(frame: .zero, pullsDown: true)
+    private let cardCount = NSTextField(labelWithString: "讲解卡片")
+    private let savedLabel = NSTextField(labelWithString: "文字自动保存")
+    private let attachmentLabel = InterfaceStyle.text("尚未配图", size: 11, color: .secondaryLabelColor)
+    private let previewEmpty = NSTextField(labelWithString: "暂无画面 · 可选择截图或从录屏取图")
+    private let progress = NSProgressIndicator()
+    private let reviewContainer = NSView()
+    private let emptyContainer = NSView()
+    private let emptyTitle = NSTextField(labelWithString: "指向画面，说出想法")
+    private let emptyDescription = NSTextField(wrappingLabelWithString: "录制时标记重点、圈画截图。\n结束后，把口述变成清晰的图文反馈。")
+    private var reviewContent: NSView!
+    private var detailScroll: NSScrollView!
+    private var emptyAction: NSButton!
+    private var emptySecondary: NSButton!
+    private var transcribeButton: NSButton!
+    private var editingCardID: UUID?
+    private var timingDirty = false
     private var idleButtons: [NSButton] = []
     private var startButton: NSButton!
     private var stopButton: NSButton!
@@ -78,13 +98,48 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             demo.anchors = [anchor]; demo.reviewCards = [ReviewCard(text: "请把右上角这个按钮改大一些，让操作更容易看见。", frameIDs: [anchor.id], startSeconds: 2.1, endSeconds: 7.8), ReviewCard(text: "这句暂时没有可靠时间戳，可以手动选图。")]
             try demoStore.save(demo); store = demoStore; project = demo; report("UI smoke fixture · 没有录屏、麦克风或网络请求"); refresh(); table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
-                guard let view = self.window.contentView else { exit(2) }
-                view.layoutSubtreeIfNeeded()
-                guard view.bounds.width <= 1100, view.bounds.height <= 800, self.preview.bounds.height <= 280 else { fputs("UI layout exceeded laptop-sized window\n", stderr); exit(5) }
-                guard !self.transcriptEditor.string.isEmpty, self.apiKeyField.stringValue.isEmpty, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(2) }
-                view.cacheDisplay(in: view.bounds, to: rep)
-                guard let data = rep.representation(using: .png, properties: [:]) else { exit(3) }
-                do { try data.write(to: directory.appendingPathComponent("window.png")); print("UI_SMOKE_OK \(Int(view.bounds.width))x\(Int(view.bounds.height))"); exit(0) } catch { exit(4) }
+                do {
+                    func render(_ name: String, width: CGFloat, height: CGFloat, dark: Bool = false) throws {
+                        self.window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                        self.window.setContentSize(NSSize(width: width, height: height))
+                        guard let view = self.window.contentView else { throw ProjectError.projectAlreadyExists }
+                        view.layoutSubtreeIfNeeded()
+                        guard self.preview.bounds.height <= 280, !self.window.contentView!.hasAmbiguousLayout else { exit(5) }
+                        guard let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(2) }
+                        view.cacheDisplay(in: view.bounds, to: rep)
+                        guard let data = rep.representation(using: .png, properties: [:]) else { exit(3) }
+                        try data.write(to: directory.appendingPathComponent(name + ".png"))
+                    }
+                    guard !self.transcriptEditor.string.isEmpty, self.apiKeyField.stringValue.isEmpty,
+                          self.exportPicker.isEnabled, self.emptyContainer.isHidden,
+                          let icon = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
+                          NSImage(contentsOf: icon) != nil else { exit(2) }
+                    try render("window", width: 1080, height: 760)
+                    try render("review-dark-compact", width: 980, height: 680, dark: true)
+                    // A timing draft follows its card across a selection change;
+                    // a card without a selected image must not show someone else's.
+                    self.startField.stringValue = "3.500"; self.timingDirty = true
+                    guard self.commitTiming() else { exit(6) }
+                    self.table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
+                    self.loadCard()
+                    guard self.preview.image == nil, self.previewEmpty.isHidden == false,
+                          self.project?.reviewCards[0].startSeconds == 3.5 else { exit(7) }
+                    self.transcriptEditor.string = "自动保存验证"
+                    self.textDidChange(Notification(name: NSText.didChangeNotification))
+                    guard try demoStore.load().reviewCards[1].text == "自动保存验证" else { exit(8) }
+                    self.setBusy(true)
+                    guard !self.exportPicker.isEnabled, !self.startButton.isEnabled, !self.transcriptEditor.isEditable else { exit(9) }
+                    self.setBusy(false)
+                    self.project?.reviewCards = []; self.editingCardID = nil; self.refresh()
+                    guard self.emptyContainer.isHidden == false, !self.exportPicker.isEnabled else { exit(10) }
+                    try render("project-empty", width: 1080, height: 760)
+                    self.project = nil; self.store = nil; self.refresh()
+                    guard self.startButton.isEnabled, !self.transcribeButton.isEnabled else { exit(11) }
+                    self.report("新建录制，边说边指。停止后可转写、校对并导出。")
+                    try render("welcome", width: 1080, height: 760)
+                    print("UI_SMOKE_OK · light/dark, compact layout, empty states, save and busy controls")
+                    exit(0)
+                } catch { fputs("UI smoke render failed: \(error.localizedDescription)\n", stderr); exit(4) }
             }
         } catch { fputs("UI smoke fixture failed\n", stderr); exit(1) }
     }
@@ -94,17 +149,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             let alert = NSAlert(); alert.messageText = "仍有录制或处理正在进行"; alert.informativeText = "请先停止录制或取消转写，再退出。已保存的项目和录音会保留。"; alert.runModal()
             return .terminateCancel
         }
+        guard commitTiming() else { return .terminateCancel }
         return .terminateNow
     }
     func applicationWillTerminate(_ notification: Notification) { if let key = hotKey { UnregisterEventHotKey(key) }; if let handler = eventHandler { RemoveEventHandler(handler) } }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { !recorder.isRecording && !busy }
     func windowShouldClose(_ sender: NSWindow) -> Bool {
         if sender === playbackWindow { closePlayback(); return true }
-        return !busy && !recorder.isBusy
+        return !busy && !recorder.isBusy && commitTiming()
     }
 
     private func button(_ title: String, _ action: Selector, idleOnly: Bool = false) -> NSButton {
         let result = NSButton(title: title, target: self, action: action)
+        result.bezelStyle = .rounded; result.font = .systemFont(ofSize: 12)
         if idleOnly { idleButtons.append(result) }; return result
     }
     private func row(_ views: [NSView]) -> NSStackView { let r = NSStackView(views: views); r.orientation = .horizontal; r.spacing = 8; r.alignment = .centerY; return r }
@@ -113,6 +170,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         let menu = NSMenu(); let root = NSMenuItem(); menu.addItem(root)
         let app = NSMenu(); app.addItem(withTitle: "关于 Point & Tell", action: #selector(about), keyEquivalent: "")
         app.addItem(.separator()); app.addItem(withTitle: "退出 Point & Tell", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"); root.submenu = app
+        let fileItem = NSMenuItem(); menu.addItem(fileItem); let file = NSMenu(title: "文件")
+        for (title, action, key) in [("新建录制…", #selector(startRecording), "n"), ("打开项目…", #selector(openProject), "o"), ("保存卡片", #selector(saveCard), "s"), ("导出 HTML…", #selector(exportHTML), "e")] {
+            let item = file.addItem(withTitle: title, action: action, keyEquivalent: key); item.target = self
+        }
+        fileItem.submenu = file
         let editItem = NSMenuItem(); menu.addItem(editItem); let edit = NSMenu(title: "编辑")
         edit.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
         edit.addItem(withTitle: "剪切", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
@@ -122,77 +184,290 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         editItem.submenu = edit; NSApp.mainMenu = menu
     }
     private func makeWindow() {
-        window = NSWindow(contentRect: NSRect(x: 120, y: 120, width: 1060, height: 760), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
-        window.title = "Point & Tell · 指指点点"; window.delegate = self; window.minSize = NSSize(width: 860, height: 650)
-        let content = NSStackView(); content.orientation = .vertical; content.alignment = .leading; content.spacing = 8
-        content.edgeInsets = NSEdgeInsets(top: 18, left: 18, bottom: 18, right: 18)
+        window = NSWindow(contentRect: NSRect(x: 120, y: 120, width: 1080, height: 760), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window.title = "Point & Tell · 指指点点"; window.delegate = self
+        window.contentMinSize = NSSize(width: 980, height: 680)
+        window.titlebarAppearsTransparent = true
+        window.setFrameAutosaveName("PointAndTell.Workspace.v2")
+        let root = WindowBackgroundView(); window.contentView = root
+        let sidebar = NSVisualEffectView(); sidebar.material = .sidebar; sidebar.blendingMode = .behindWindow
+        sidebar.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(sidebar)
+        let main = NSView(); main.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(main)
+        NSLayoutConstraint.activate([
+            sidebar.leadingAnchor.constraint(equalTo: root.leadingAnchor), sidebar.topAnchor.constraint(equalTo: root.topAnchor),
+            sidebar.bottomAnchor.constraint(equalTo: root.bottomAnchor), sidebar.widthAnchor.constraint(equalToConstant: 226),
+            main.leadingAnchor.constraint(equalTo: sidebar.trailingAnchor), main.trailingAnchor.constraint(equalTo: root.trailingAnchor),
+            main.topAnchor.constraint(equalTo: root.topAnchor), main.bottomAnchor.constraint(equalTo: root.bottomAnchor)
+        ])
+        makeSidebar(in: sidebar)
+        makeWorkspace(in: main)
+        updateInterface()
+        window.center()
+    }
+
+    private func makeSidebar(in parent: NSView) {
+        let icon = NSImageView()
+        if let url = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"), let image = NSImage(contentsOf: url) {
+            icon.image = image; NSApp.applicationIconImage = image
+        }
+        icon.widthAnchor.constraint(equalToConstant: 42).isActive = true
+        icon.heightAnchor.constraint(equalToConstant: 42).isActive = true
+        let brand = row([icon, InterfaceStyle.column([
+            InterfaceStyle.text("Point & Tell", size: 16, weight: .bold),
+            InterfaceStyle.text("指指点点", size: 11, color: .secondaryLabelColor)
+        ], spacing: 3)])
+        startButton = button("新建录制", #selector(startRecording), idleOnly: true)
+        decorate(startButton, symbol: "record.circle", primary: true)
+        startButton.toolTip = "创建本地项目并开始录屏与麦克风录音（⌘N）"
+        let open = button("打开项目…", #selector(openProject), idleOnly: true); decorate(open, symbol: "folder")
         screens = NSScreen.screens
-        for (index, screen) in screens.enumerated() { screenPicker.addItem(withTitle: "屏幕 \(index + 1) · \(screen.localizedName)") }
-        fpsPicker.addItems(withTitles: ["5 fps · 省资源", "10 fps"])
-        startButton = button("新建并开始录制", #selector(startRecording), idleOnly: true)
-        content.addArrangedSubview(row([screenPicker, fpsPicker, startButton, button("打开项目…", #selector(openProject), idleOnly: true), button("显示项目文件", #selector(revealProject))]))
-        microphonePicker.widthAnchor.constraint(equalToConstant: 340).isActive = true
-        refreshMicrophones()
-        content.addArrangedSubview(row([label("麦克风"), microphonePicker,
-            button("刷新设备", #selector(refreshMicrophones), idleOnly: true),
-            button("本地试听录屏", #selector(playRecording), idleOnly: true)]))
-        statusLabel.maximumNumberOfLines = 2; statusLabel.font = .systemFont(ofSize: 12); content.addArrangedSubview(statusLabel)
-        apiKeyField.placeholderString = "阿里云 API Key，仅本次内存保存"; apiKeyField.widthAnchor.constraint(equalToConstant: 295).isActive = true
+        for (index, screen) in screens.enumerated() { screenPicker.addItem(withTitle: "\(index + 1) · \(screen.localizedName)") }
+        screenPicker.setAccessibilityLabel("录制屏幕")
+        fpsPicker.addItems(withTitles: ["5 fps · 更省资源", "10 fps · 更流畅"]); fpsPicker.setAccessibilityLabel("录制帧率")
+        microphonePicker.setAccessibilityLabel("录音麦克风"); refreshMicrophones()
+        let refresh = button("刷新", #selector(refreshMicrophones), idleOnly: true); refresh.controlSize = .small
+        let micHeading = row([caption("麦克风"), InterfaceStyle.spacer(), refresh])
+        let settings = InterfaceStyle.column([
+            sectionHeading("录制设置", symbol: "slider.horizontal.3"), caption("屏幕"), screenPicker,
+            caption("帧率"), fpsPicker, micHeading, microphonePicker
+        ], spacing: 7)
+        let playback = button("试听录屏", #selector(playRecording), idleOnly: true); decorate(playback, symbol: "play.circle")
+        apiKeyField.placeholderString = "输入阿里云 API Key"
+        apiKeyField.font = .systemFont(ofSize: 12); apiKeyField.setAccessibilityLabel("阿里云转写 API Key")
+        apiKeyField.toolTip = "密钥仅在本次运行内存中保留，不写入项目或导出文件。"
+        transcribeButton = button("开始转写", #selector(transcribe), idleOnly: true); decorate(transcribeButton, symbol: "waveform")
         cancelASRButton = button("取消转写", #selector(cancelASR)); cancelASRButton.isEnabled = false
-        content.addArrangedSubview(row([apiKeyField, button("转写 / 重试失败片段", #selector(transcribe), idleOnly: true), cancelASRButton]))
-        content.addArrangedSubview(label("只有点击转写才会发送音频给阿里云；截图和视频始终留在本地。请勿录制不愿上传的私密声音。"))
-        let split = NSSplitView(); split.isVertical = true; split.dividerStyle = .thin
-        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("card")); column.title = "讲解卡片"; column.width = 250; table.addTableColumn(column)
-        table.delegate = self; table.dataSource = self; table.headerView = nil; table.rowHeight = 55
-        let tableScroll = NSScrollView(); tableScroll.documentView = table; tableScroll.hasVerticalScroller = true; split.addArrangedSubview(tableScroll)
-        let detail = NSStackView(); detail.orientation = .vertical; detail.alignment = .leading; detail.spacing = 9; detail.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 0)
-        detail.addArrangedSubview(cardInfo)
-        transcriptEditor.delegate = self; transcriptEditor.isRichText = false;
-        transcriptEditor.minSize = NSSize(width: 0, height: 125); transcriptEditor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
-        transcriptEditor.isHorizontallyResizable = false; transcriptEditor.autoresizingMask = .width; transcriptEditor.textContainer?.widthTracksTextView = true; transcriptEditor.font = .systemFont(ofSize: 15); transcriptEditor.isVerticallyResizable = true
+        cancelASRButton.isHidden = true
+        let transcription = InterfaceStyle.column([
+            sectionHeading("语音转文字", symbol: "waveform"),
+            caption("录制后先试听，再转写。"), apiKeyField, transcribeButton, cancelASRButton,
+            caption("仅转写时上传音频；视频和截图留在本地。密钥仅本次有效。")
+        ], spacing: 8)
+        let reveal = button("在 Finder 中显示", #selector(revealProject), idleOnly: true)
+        reveal.controlSize = .small; decorate(reveal, symbol: "folder")
+        let stack = InterfaceStyle.column([brand, startButton, open, InterfaceStyle.separator(), settings,
+            playback, InterfaceStyle.separator(), transcription, InterfaceStyle.separator(), reveal], spacing: 12)
+        let scroll = scrolling(stack, inset: 16)
+        InterfaceStyle.pin(scroll, to: parent)
+    }
+
+    private func makeWorkspace(in parent: NSView) {
+        workspaceTitle.font = .systemFont(ofSize: 23, weight: .bold)
+        workspaceTitle.lineBreakMode = .byTruncatingTail; workspaceTitle.maximumNumberOfLines = 1
+        workspaceTitle.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        workspaceSubtitle.font = .systemFont(ofSize: 12); workspaceSubtitle.textColor = .secondaryLabelColor
+        exportPicker.addItem(withTitle: "导出…")
+        exportPicker.addItem(withTitle: "独立 HTML 网页…"); exportPicker.lastItem?.target = self; exportPicker.lastItem?.action = #selector(exportHTML)
+        exportPicker.addItem(withTitle: "图片 + Markdown 文件夹…"); exportPicker.lastItem?.target = self; exportPicker.lastItem?.action = #selector(exportBundle)
+        exportPicker.image = NSImage(systemSymbolName: "square.and.arrow.up", accessibilityDescription: nil)
+        exportPicker.imagePosition = .imageLeading; exportPicker.bezelStyle = .rounded
+        exportPicker.setAccessibilityLabel("导出讲解卡片")
+        let header = row([InterfaceStyle.column([workspaceTitle, workspaceSubtitle], spacing: 5), InterfaceStyle.spacer(), exportPicker])
+        stepLabel.font = .systemFont(ofSize: 11, weight: .medium); stepLabel.textColor = InterfaceStyle.accent
+
+        let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("card")); column.title = "讲解卡片"
+        table.addTableColumn(column); table.delegate = self; table.dataSource = self
+        table.headerView = nil; table.rowHeight = 92; table.intercellSpacing = NSSize(width: 0, height: 6)
+        table.style = .sourceList; table.backgroundColor = .clear; table.allowsEmptySelection = false
+        table.setAccessibilityLabel("讲解卡片列表")
+        let tableScroll = NSScrollView(); tableScroll.documentView = table; tableScroll.hasVerticalScroller = true
+        tableScroll.drawsBackground = false
+        let add = button("添加", #selector(addCard), idleOnly: true); add.controlSize = .small; decorate(add, symbol: "plus")
+        cardCount.font = .systemFont(ofSize: 12, weight: .semibold)
+        let listHeader = row([cardCount, InterfaceStyle.spacer(), add])
+        let list = InterfaceStyle.column([listHeader, tableScroll], spacing: 12)
+        list.widthAnchor.constraint(equalToConstant: 190).isActive = true
+        let listSurface = SurfaceView(); InterfaceStyle.pin(list, to: listSurface, inset: 12)
+        listSurface.widthAnchor.constraint(equalToConstant: 214).isActive = true
+
+        let details = makeCardDetail()
+        detailScroll = scrolling(details, inset: 16)
+        let detailSurface = SurfaceView(); InterfaceStyle.pin(detailScroll, to: detailSurface)
+        let review = row([listSurface, detailSurface]); review.alignment = .top; review.spacing = 16
+        NSLayoutConstraint.activate([listSurface.heightAnchor.constraint(equalTo: review.heightAnchor), detailSurface.heightAnchor.constraint(equalTo: review.heightAnchor)])
+        review.translatesAutoresizingMaskIntoConstraints = false; reviewContainer.addSubview(review)
+        NSLayoutConstraint.activate([review.leadingAnchor.constraint(equalTo: reviewContainer.leadingAnchor), review.trailingAnchor.constraint(equalTo: reviewContainer.trailingAnchor), review.topAnchor.constraint(equalTo: reviewContainer.topAnchor), review.bottomAnchor.constraint(equalTo: reviewContainer.bottomAnchor)])
+        reviewContent = review
+        makeEmptyState(in: reviewContainer)
+
+        statusLabel.font = .systemFont(ofSize: 11); statusLabel.textColor = .secondaryLabelColor
+        statusLabel.maximumNumberOfLines = 2; statusLabel.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        progress.style = .spinning; progress.controlSize = .small; progress.isDisplayedWhenStopped = false
+        progress.widthAnchor.constraint(equalToConstant: 16).isActive = true; progress.heightAnchor.constraint(equalToConstant: 16).isActive = true
+        let status = row([progress, statusLabel]); status.heightAnchor.constraint(equalToConstant: 34).isActive = true
+        let stack = InterfaceStyle.column([header, stepLabel, reviewContainer, InterfaceStyle.separator(), status], spacing: 16)
+        InterfaceStyle.pin(stack, to: parent, inset: 22)
+    }
+
+    private func makeCardDetail() -> NSStackView {
+        cardInfo.font = .systemFont(ofSize: 16, weight: .semibold)
+        savedLabel.font = .systemFont(ofSize: 10); savedLabel.textColor = .secondaryLabelColor
+        let title = row([cardInfo, InterfaceStyle.spacer(), savedLabel])
+        transcriptEditor.delegate = self; transcriptEditor.isRichText = false; transcriptEditor.allowsUndo = true
+        transcriptEditor.minSize = NSSize(width: 0, height: 108)
+        transcriptEditor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
+        transcriptEditor.isHorizontallyResizable = false; transcriptEditor.autoresizingMask = .width
+        transcriptEditor.textContainer?.widthTracksTextView = true
+        transcriptEditor.font = .systemFont(ofSize: 14); transcriptEditor.textColor = .labelColor
+        transcriptEditor.backgroundColor = .textBackgroundColor; transcriptEditor.isVerticallyResizable = true
+        transcriptEditor.textContainerInset = NSSize(width: 10, height: 10)
+        transcriptEditor.setAccessibilityLabel("讲解文字，自动保存")
         let textScroll = NSScrollView(); textScroll.documentView = transcriptEditor; textScroll.hasVerticalScroller = true
-        textScroll.heightAnchor.constraint(equalToConstant: 125).isActive = true; detail.addArrangedSubview(textScroll)
-        startField.placeholderString = "起始秒，可空"; endField.placeholderString = "结束秒，可空"
-        startField.widthAnchor.constraint(equalToConstant: 110).isActive = true; endField.widthAnchor.constraint(equalToConstant: 110).isActive = true
-        detail.addArrangedSubview(row([label("时间"), startField, label("→"), endField, button("保存文字与时间", #selector(saveCard), idleOnly: true)]))
-        framePicker.target = self; framePicker.action = #selector(showSelectedFrame); framePicker.widthAnchor.constraint(equalToConstant: 280).isActive = true
-        detail.addArrangedSubview(row([framePicker, button("替换配图", #selector(replaceFrame), idleOnly: true), button("添加配图", #selector(appendFrame), idleOnly: true)]))
+        textScroll.borderType = .bezelBorder; textScroll.heightAnchor.constraint(equalToConstant: 120).isActive = true
+        startField.placeholderString = "起始"; endField.placeholderString = "结束"
+        startField.setAccessibilityLabel("起始时间，秒"); endField.setAccessibilityLabel("结束时间，秒")
+        startField.widthAnchor.constraint(equalToConstant: 76).isActive = true
+        endField.widthAnchor.constraint(equalToConstant: 76).isActive = true
+        startField.delegate = self; endField.delegate = self
+        let save = button("保存时间", #selector(saveCard), idleOnly: true); save.controlSize = .small
+        let timing = row([caption("秒"), startField, caption("—"), endField, InterfaceStyle.spacer(), save])
+        framePicker.target = self; framePicker.action = #selector(showSelectedFrame)
+        framePicker.setAccessibilityLabel("项目截图，选择后预览")
+        framePicker.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+        framePicker.widthAnchor.constraint(greaterThanOrEqualToConstant: 100).isActive = true
         preview.imageScaling = .scaleProportionallyUpOrDown
         preview.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         preview.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
-        preview.heightAnchor.constraint(greaterThanOrEqualToConstant: 150).isActive = true
-        preview.heightAnchor.constraint(lessThanOrEqualToConstant: 270).isActive = true
-        detail.addArrangedSubview(preview)
-        frameTimeField.widthAnchor.constraint(equalToConstant: 90).isActive = true
-        detail.addArrangedSubview(row([label("从录屏取图（秒）"), frameTimeField, button("提取并配图", #selector(extractManualFrame), idleOnly: true), button("清除本卡配图", #selector(clearFrames), idleOnly: true)]))
-        split.addArrangedSubview(detail); content.addArrangedSubview(split)
-        content.addArrangedSubview(row([button("添加手动卡片", #selector(addCard), idleOnly: true), button("导出 HTML…", #selector(exportHTML), idleOnly: true), button("导出图片 + Markdown…", #selector(exportBundle), idleOnly: true)]))
-        window.contentView = WindowBackgroundView(); guard let root = window.contentView else { return }; root.addSubview(content); content.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([content.leadingAnchor.constraint(equalTo: root.leadingAnchor), content.trailingAnchor.constraint(equalTo: root.trailingAnchor), content.topAnchor.constraint(equalTo: root.topAnchor), content.bottomAnchor.constraint(equalTo: root.bottomAnchor), split.widthAnchor.constraint(equalTo: content.widthAnchor, constant: -36), split.heightAnchor.constraint(greaterThanOrEqualToConstant: 430), tableScroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 210), tableScroll.widthAnchor.constraint(lessThanOrEqualToConstant: 300), textScroll.widthAnchor.constraint(equalTo: detail.widthAnchor, constant: -12), preview.widthAnchor.constraint(equalTo: detail.widthAnchor, constant: -12)])
-        window.center()
+        preview.setAccessibilityLabel("截图预览")
+        let previewSurface = SurfaceView(); previewSurface.fill = .underPageBackgroundColor; previewSurface.radius = 8
+        InterfaceStyle.pin(preview, to: previewSurface, inset: 8)
+        previewSurface.heightAnchor.constraint(equalToConstant: 196).isActive = true
+        previewEmpty.font = .systemFont(ofSize: 12); previewEmpty.textColor = .secondaryLabelColor
+        previewEmpty.alignment = .center; previewEmpty.translatesAutoresizingMaskIntoConstraints = false; previewSurface.addSubview(previewEmpty)
+        NSLayoutConstraint.activate([previewEmpty.centerXAnchor.constraint(equalTo: previewSurface.centerXAnchor), previewEmpty.centerYAnchor.constraint(equalTo: previewSurface.centerYAnchor)])
+        let replace = button("替换", #selector(replaceFrame), idleOnly: true)
+        let append = button("添加", #selector(appendFrame), idleOnly: true)
+        let clear = button("移除配图", #selector(clearFrames), idleOnly: true)
+        [replace, append, clear].forEach { $0.controlSize = .small }
+        let images = row([framePicker, replace, append])
+        frameTimeField.widthAnchor.constraint(equalToConstant: 74).isActive = true; frameTimeField.setAccessibilityLabel("从录屏取图的时间，秒")
+        let extract = button("提取", #selector(extractManualFrame), idleOnly: true); extract.controlSize = .small
+        let extraction = row([caption("取图 / 秒"), frameTimeField, extract, InterfaceStyle.spacer(), clear])
+        return InterfaceStyle.column([title, textScroll, timing, InterfaceStyle.separator(),
+            sectionHeading("画面与标注", symbol: "photo"), previewSurface, attachmentLabel, images, extraction], spacing: 12)
+    }
+
+    private func makeEmptyState(in parent: NSView) {
+        emptyTitle.font = .systemFont(ofSize: 24, weight: .bold); emptyTitle.alignment = .center
+        emptyDescription.font = .systemFont(ofSize: 13); emptyDescription.textColor = .secondaryLabelColor
+        emptyDescription.alignment = .center
+        emptyAction = button("开始第一次录制", #selector(startRecording), idleOnly: true)
+        decorate(emptyAction, symbol: "record.circle", primary: true)
+        emptySecondary = button("打开已有项目…", #selector(openProject), idleOnly: true)
+        let hero = InterfaceStyle.symbol("rectangle.on.rectangle", size: 52)
+        let symbolRow = row([InterfaceStyle.spacer(), hero, InterfaceStyle.spacer()])
+        let stack = InterfaceStyle.column([symbolRow, emptyTitle, emptyDescription, emptyAction, emptySecondary], spacing: 18)
+        stack.translatesAutoresizingMaskIntoConstraints = false; emptyContainer.addSubview(stack)
+        NSLayoutConstraint.activate([stack.centerXAnchor.constraint(equalTo: emptyContainer.centerXAnchor), stack.centerYAnchor.constraint(equalTo: emptyContainer.centerYAnchor), stack.widthAnchor.constraint(equalToConstant: 350)])
+        InterfaceStyle.pin(emptyContainer, to: parent)
+    }
+
+    private func scrolling(_ content: NSView, inset: CGFloat) -> NSScrollView {
+        let scroll = NSScrollView(); scroll.hasVerticalScroller = true; scroll.drawsBackground = false
+        scroll.autohidesScrollers = true; scroll.horizontalScrollElasticity = .none
+        let document = FlippedContentView(); scroll.documentView = document
+        document.translatesAutoresizingMaskIntoConstraints = false
+        InterfaceStyle.pin(content, to: document, inset: inset)
+        NSLayoutConstraint.activate([document.widthAnchor.constraint(equalTo: scroll.contentView.widthAnchor),
+            document.topAnchor.constraint(equalTo: scroll.contentView.topAnchor),
+            document.leadingAnchor.constraint(equalTo: scroll.contentView.leadingAnchor)])
+        return scroll
+    }
+    private func caption(_ text: String) -> NSTextField { InterfaceStyle.text(text, size: 11, color: .secondaryLabelColor) }
+    private func sectionHeading(_ text: String, symbol: String) -> NSStackView {
+        row([InterfaceStyle.symbol(symbol, size: 14), InterfaceStyle.text(text, size: 12, weight: .semibold)])
+    }
+    private func decorate(_ button: NSButton, symbol: String, primary: Bool = false) {
+        button.bezelStyle = .rounded; button.imagePosition = .imageLeading
+        button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        button.font = .systemFont(ofSize: 12, weight: primary ? .semibold : .regular)
+        if primary { button.bezelColor = NSColor(calibratedRed: 0.06, green: 0.36, blue: 0.31, alpha: 1); button.contentTintColor = .white }
+        button.setAccessibilityLabel(button.title)
     }
     private func makeToolbar() {
         toolbar = NSPanel(contentRect: NSRect(x: 60, y: 60, width: 730, height: 50), styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
         toolbar.title = "Point & Tell · 录制中"; toolbar.level = .floating; toolbar.isFloatingPanel = true; toolbar.hidesOnDeactivate = false; toolbar.isReleasedWhenClosed = false
-        stopButton = button("停止", #selector(stopRecording))
+        stopButton = button("结束录制", #selector(stopRecording)); decorate(stopButton, symbol: "stop.fill")
+        stopButton.contentTintColor = .systemRed
+        timerLabel.font = .monospacedDigitSystemFont(ofSize: 20, weight: .medium)
+        timerLabel.widthAnchor.constraint(equalToConstant: 68).isActive = true
+        microphoneLabel.font = .systemFont(ofSize: 11)
         microphoneLevel.levelIndicatorStyle = .continuousCapacity
         microphoneLevel.minValue = -60; microphoneLevel.maxValue = 0; microphoneLevel.doubleValue = -60
         microphoneLevel.widthAnchor.constraint(equalToConstant: 100).isActive = true
         microphoneLevel.toolTip = "麦克风平均电平，−60 至 0 dBFS；有电平不等于一定是人声"
         microphoneLabel.widthAnchor.constraint(equalToConstant: 215).isActive = true
         microphoneLabel.lineBreakMode = .byTruncatingMiddle
-        let controls = row([timerLabel, microphoneLabel, microphoneLevel, button("标记 ⌃⌥M", #selector(mark)), button("画笔", #selector(pen)), stopButton]); controls.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12); toolbar.contentView = controls
+        let controls = row([InterfaceStyle.symbol("record.circle.fill", size: 14), timerLabel, microphoneLabel, microphoneLevel, button("标记 ⌃⌥M", #selector(mark)), button("画笔", #selector(pen)), stopButton]); controls.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12); toolbar.contentView = controls
     }
-    @objc private func about() { let a = NSAlert(); a.messageText = "Point & Tell 0.1.1"; a.informativeText = "适用于 macOS 11+ 的轻量屏幕讲解工具。\n录屏和标注本地保存；转写按需上传音频。\n这是早期版本，真实阿里云接口与旧款 Mac 性能需要设备验证。"; a.runModal() }
-    private func setBusy(_ value: Bool, status: String? = nil) { busy = value; transcriptEditor.isEditable = !value; startField.isEnabled = !value; endField.isEnabled = !value; framePicker.isEnabled = !value; frameTimeField.isEnabled = !value; apiKeyField.isEnabled = !value; idleButtons.forEach { $0.isEnabled = !value && !recorder.isRecording }; screenPicker.isEnabled = !value; fpsPicker.isEnabled = !value; microphonePicker.isEnabled = !value; if let status = status { statusLabel.stringValue = status } }
+    @objc private func about() { let a = NSAlert(); a.messageText = "Point & Tell 0.2.0"; a.informativeText = "适用于 macOS 11+ 的轻量屏幕讲解工具。\n录屏和标注本地保存；转写按需上传音频。\n这是早期版本，真实阿里云接口与旧款 Mac 性能需要设备验证。"; a.runModal() }
+    private func setBusy(_ value: Bool, status: String? = nil) {
+        busy = value
+        if value { progress.startAnimation(nil) } else { progress.stopAnimation(nil) }
+        if let status = status { report(status) }
+        updateInterface()
+    }
     private func persist() throws { if let project = project, let store = store { try store.save(project) } }
     private func fail(_ error: Error) { let alert = NSAlert(error: error); alert.runModal() }
     private func report(_ text: String) { statusLabel.stringValue = text; statusLabel.toolTip = text }
-    private func refresh() { table.reloadData(); refreshFramePicker(); if table.selectedRow >= 0 { loadCard() } }
+    private func actionEnabled(_ action: Selector?) -> Bool {
+        guard !busy, !recorder.isBusy else { return false }
+        switch action {
+        case #selector(startRecording), #selector(openProject), #selector(refreshMicrophones): return true
+        case #selector(revealProject), #selector(addCard): return project != nil
+        case #selector(playRecording), #selector(transcribe): return project?.recording != nil
+        case #selector(exportHTML), #selector(exportBundle): return !(project?.reviewCards.isEmpty ?? true) || !(project?.transcripts.isEmpty ?? true)
+        case #selector(saveCard): return cardIndex != nil
+        case #selector(clearFrames): return cardIndex.map { !(project?.reviewCards[$0].frameIDs.isEmpty ?? true) } ?? false
+        case #selector(replaceFrame), #selector(appendFrame): return cardIndex != nil && framePicker.indexOfSelectedItem >= 0
+        case #selector(extractManualFrame): return cardIndex != nil && project?.recording != nil
+        default: return true
+        }
+    }
+    func validateMenuItem(_ menuItem: NSMenuItem) -> Bool { actionEnabled(menuItem.action) }
+    private func updateInterface() {
+        guard reviewContent != nil else { return }
+        idleButtons.forEach { $0.isEnabled = actionEnabled($0.action) }
+        let editable = !busy && !recorder.isBusy && cardIndex != nil
+        transcriptEditor.isEditable = editable; startField.isEnabled = editable; endField.isEnabled = editable
+        framePicker.isEnabled = editable && !(project?.anchors.isEmpty ?? true)
+        frameTimeField.isEnabled = editable && project?.recording != nil
+        apiKeyField.isEnabled = !busy; screenPicker.isEnabled = !busy; fpsPicker.isEnabled = !busy; microphonePicker.isEnabled = !busy
+        table.isEnabled = !busy
+        exportPicker.isEnabled = actionEnabled(#selector(exportHTML))
+        cancelASRButton.isHidden = !busy || captureStateBeforeASR == nil
+        transcribeButton.title = (project?.asrChunks.contains { $0.state == .failed || $0.state == .pending } ?? false) ? "继续 / 重试转写" : "开始转写"
+        let count = project?.reviewCards.count ?? 0
+        cardCount.stringValue = "卡片 · \(count)"
+        workspaceTitle.stringValue = project?.title ?? "把想法讲清楚"
+        workspaceTitle.toolTip = project?.title
+        workspaceSubtitle.stringValue = project.map { "\(count) 张讲解卡片 · \($0.anchors.count) 张截图 · 本地项目" } ?? "录下画面和讲解，整理成可以直接分享的图文卡片。"
+        reviewContent.isHidden = count == 0; emptyContainer.isHidden = count > 0
+        emptyTitle.stringValue = project == nil ? "指向画面，说出想法" : "录制已就位，开始整理"
+        emptyDescription.stringValue = project == nil ? "录制时标记重点、圈画截图。\n结束后，把口述变成清晰的图文反馈。" : "先试听录屏，再用左侧转写生成卡片。\n也可以手动添加文字和配图。"
+        emptyAction.title = project == nil ? "开始第一次录制" : "添加第一张卡片"
+        emptyAction.action = project == nil ? #selector(startRecording) : #selector(addCard)
+        emptyAction.setAccessibilityLabel(emptyAction.title)
+        emptyAction.isEnabled = actionEnabled(emptyAction.action)
+        emptySecondary.title = project == nil ? "打开已有项目…" : "试听录屏"
+        emptySecondary.action = project == nil ? #selector(openProject) : #selector(playRecording)
+        emptySecondary.isEnabled = actionEnabled(emptySecondary.action)
+    }
+    private func refresh() {
+        let selectedID = editingCardID
+        table.reloadData(); refreshFramePicker()
+        let cards = project?.reviewCards ?? []
+        if !cards.isEmpty {
+            let index = cards.firstIndex { $0.id == selectedID } ?? 0
+            table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false)
+        }
+        loadCard(); updateInterface()
+    }
     private var cardIndex: Int? { guard let count = project?.reviewCards.count, table.selectedRow >= 0, table.selectedRow < count else { return nil }; return table.selectedRow }
 
     @objc private func startRecording() {
         guard !busy, !recorder.isRecording else { return }
+        guard commitTiming() else { return }
         closePlayback()
         let panel = NSSavePanel(); panel.title = "保存新的本地录制项目"; panel.nameFieldStringValue = "Point-and-Tell-\(Int(Date().timeIntervalSince1970)).pointtell"; panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let folder = panel.url else { return }
@@ -201,6 +476,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             let newStore = ProjectStore(folderURL: folder); project = try newStore.create(title: folder.deletingPathExtension().lastPathComponent); store = newStore
             let index = screenPicker.indexOfSelectedItem
             guard screens.indices.contains(index), let id = screens[index].deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return }
+            editingCardID = nil; timingDirty = false; refresh()
             selectedDisplay = id.uint32Value
             let fps = fpsPicker.indexOfSelectedItem == 0 ? 5 : 10
             project?.recording = RecordingInfo(relativePath: "recording.mov", durationSeconds: 0, displayID: selectedDisplay, fps: fps)
@@ -351,9 +627,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     }
 
     @objc private func openProject() {
-        guard !busy else { return }; let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.title = "选择 .pointtell 项目文件夹"
+        guard !busy, commitTiming() else { return }; let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.title = "选择 .pointtell 项目文件夹"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { let chosen = ProjectStore(folderURL: url); let loaded = try chosen.load(); closePlayback(); project = loaded; store = chosen
+        do { let chosen = ProjectStore(folderURL: url); let loaded = try chosen.load(); closePlayback(); project = loaded; store = chosen; editingCardID = nil; timingDirty = false
             if let recording = project?.recording, let movie = try? chosen.resolveRelativePath(recording.relativePath, requireExisting: true) {
                 let duration = AVURLAsset(url: movie).duration.seconds
                 if duration.isFinite && duration > 0 { project?.recording?.durationSeconds = duration; try persist() }
@@ -369,7 +645,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     @objc private func revealProject() { if let url = store?.folderURL { NSWorkspace.shared.activateFileViewerSelecting([url]) } }
 
     @objc private func transcribe() {
-        guard !busy, let store = store, let recording = project?.recording else { return }
+        guard !busy, commitTiming(), let store = store, let recording = project?.recording else { return }
         let key = apiKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { report("请先输入本次转写使用的 API Key。密钥不会保存到项目、日志或导出文件。"); return }
         closePlayback(); cancelRequested = false; silenceUploadApproved = false
@@ -542,57 +818,105 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     }
 
     func textDidChange(_ notification: Notification) {
-        guard !busy, let index = cardIndex else { return }
+        guard !busy, let id = editingCardID, let index = project?.reviewCards.firstIndex(where: { $0.id == id }) else { return }
         project?.reviewCards[index].text = transcriptEditor.string
-        do { try persist() } catch { report("保存文字失败：\(error.localizedDescription)") }
+        do { try persist(); savedLabel.stringValue = "文字已保存"; updateVisibleCard(at: index) }
+        catch { savedLabel.stringValue = "保存失败"; report("保存文字失败：\(error.localizedDescription)") }
     }
-    func numberOfRows(in tableView: NSTableView) -> Int { project?.reviewCards.count ?? 0 }
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard let card = project?.reviewCards[row] else { return nil }
-        let time = card.startSeconds.map { String(format: "%.1fs", $0) } ?? "时间待校对"
-        let text = NSTextField(wrappingLabelWithString: "\(row + 1). \(time) · \(card.frameIDs.count) 张图\n\(card.text.isEmpty ? "（添加讲解文字）" : String(card.text.prefix(45)))")
-        text.font = .systemFont(ofSize: 12); return text
+    func controlTextDidChange(_ notification: Notification) {
+        guard let field = notification.object as? NSTextField, field === startField || field === endField else { return }
+        timingDirty = true; savedLabel.stringValue = "时间待保存"
     }
-    func tableViewSelectionDidChange(_ notification: Notification) { loadCard() }
-    private func loadCard() {
-        guard let index = cardIndex, let card = project?.reviewCards[index] else { return }
-        transcriptEditor.string = card.text; startField.stringValue = card.startSeconds.map { String(format: "%.3f", $0) } ?? ""; endField.stringValue = card.endSeconds.map { String(format: "%.3f", $0) } ?? ""
-        cardInfo.stringValue = "卡片 \(index + 1) · \(card.frameIDs.count) 张配图（导出保留所选图片顺序）"
-        if let id = card.frameIDs.first, let anchorIndex = project?.anchors.firstIndex(where: { $0.id == id }) { framePicker.selectItem(at: anchorIndex) }
-        showSelectedFrame()
-    }
-    @objc private func saveCard() {
-        guard let index = cardIndex else { return }
+    @discardableResult private func commitTiming() -> Bool {
+        guard timingDirty, let id = editingCardID, let index = project?.reviewCards.firstIndex(where: { $0.id == id }) else { return true }
         let a = startField.stringValue.trimmingCharacters(in: .whitespaces), b = endField.stringValue.trimmingCharacters(in: .whitespaces)
         let start = a.isEmpty ? nil : Double(a), end = b.isEmpty ? nil : Double(b)
-        guard (a.isEmpty || start != nil), (b.isEmpty || end != nil), start.map({ $0.isFinite && $0 >= 0 }) ?? true, end.map({ $0.isFinite && $0 >= 0 }) ?? true, !(start != nil && end != nil && end! < start!) else { report("请输入有效的秒数，结束时间不能早于起始时间。"); return }
-        project?.reviewCards[index].text = transcriptEditor.string; project?.reviewCards[index].startSeconds = start; project?.reviewCards[index].endSeconds = end
-        do { try persist(); table.reloadData(); table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false); report("卡片已保存") } catch { fail(error) }
+        guard (a.isEmpty || start != nil), (b.isEmpty || end != nil),
+              start.map({ $0.isFinite && $0 >= 0 }) ?? true, end.map({ $0.isFinite && $0 >= 0 }) ?? true,
+              !(start != nil && end != nil && end! < start!) else {
+            savedLabel.stringValue = "请检查时间"
+            report("时间未保存：请输入有效秒数，结束时间不能早于起始时间。也可清空时间。")
+            window.makeFirstResponder(startField); NSSound.beep(); return false
+        }
+        project?.reviewCards[index].startSeconds = start; project?.reviewCards[index].endSeconds = end
+        do { try persist(); timingDirty = false; savedLabel.stringValue = "已保存"; updateVisibleCard(at: index); return true }
+        catch { savedLabel.stringValue = "保存失败"; report(error.localizedDescription); return false }
     }
-    @objc private func addCard() { guard project != nil else { return }; project?.reviewCards.append(ReviewCard(text: "")); do { try persist(); table.reloadData(); table.selectRowIndexes(IndexSet(integer: (project?.reviewCards.count ?? 1) - 1), byExtendingSelection: false) } catch { fail(error) } }
-    private func refreshFramePicker() { framePicker.removeAllItems(); for anchor in project?.anchors ?? [] { framePicker.addItem(withTitle: String(format: "%.2fs · %@", anchor.timestamp, anchor.kind.rawValue)) }; showSelectedFrame() }
+    func numberOfRows(in tableView: NSTableView) -> Int { project?.reviewCards.count ?? 0 }
+    private func configure(_ cell: ReviewCardCell, at index: Int) {
+        guard let cards = project?.reviewCards, cards.indices.contains(index) else { return }
+        let card = cards[index]
+        let time = card.startSeconds.map { String(format: "%.1f 秒", $0) } ?? "时间待校对"
+        cell.configure(number: index + 1, text: card.text, time: time, images: card.frameIDs.count)
+    }
+    private func updateVisibleCard(at index: Int) {
+        if let cell = table.view(atColumn: 0, row: index, makeIfNecessary: false) as? ReviewCardCell { configure(cell, at: index) }
+    }
+    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
+        let identifier = NSUserInterfaceItemIdentifier("ReviewCard")
+        let cell = tableView.makeView(withIdentifier: identifier, owner: self) as? ReviewCardCell ?? ReviewCardCell(frame: .zero)
+        cell.identifier = identifier; configure(cell, at: row); return cell
+    }
+    func tableView(_ tableView: NSTableView, shouldSelectRow row: Int) -> Bool { !busy && commitTiming() }
+    func tableViewSelectionDidChange(_ notification: Notification) { loadCard() }
+    private func loadCard() {
+        guard let index = cardIndex, let card = project?.reviewCards[index] else {
+            editingCardID = nil; transcriptEditor.string = ""; preview.image = nil; updateInterface(); return
+        }
+        if editingCardID != card.id { transcriptEditor.undoManager?.removeAllActions() }
+        editingCardID = card.id; timingDirty = false
+        transcriptEditor.string = card.text
+        startField.stringValue = card.startSeconds.map { String(format: "%.3f", $0) } ?? ""
+        endField.stringValue = card.endSeconds.map { String(format: "%.3f", $0) } ?? ""
+        cardInfo.stringValue = "讲解 \(String(format: "%02d", index + 1))"
+        savedLabel.stringValue = "文字自动保存"
+        attachmentLabel.stringValue = card.frameIDs.isEmpty ? "尚未配图 · 预览后点击“添加”或“替换”" : "已配 \(card.frameIDs.count) 张图 · 按添加顺序导出"
+        if let id = card.frameIDs.first, let anchorIndex = project?.anchors.firstIndex(where: { $0.id == id }) { framePicker.selectItem(at: anchorIndex) }
+        else { framePicker.select(nil) }
+        showSelectedFrame(); updateInterface()
+    }
+    @objc private func saveCard() {
+        guard !busy, cardIndex != nil, commitTiming() else { return }
+        do { try persist(); savedLabel.stringValue = "已保存"; report("卡片已保存到本地项目。") } catch { fail(error) }
+    }
+    @objc private func addCard() {
+        guard !busy, project != nil, commitTiming() else { return }
+        let card = ReviewCard(text: ""); project?.reviewCards.append(card)
+        do { try persist(); editingCardID = card.id; refresh(); window.makeFirstResponder(transcriptEditor) } catch { fail(error) }
+    }
+    private func refreshFramePicker() {
+        framePicker.removeAllItems()
+        for anchor in project?.anchors ?? [] {
+            let kind: String
+            switch anchor.kind { case .pen: kind = "画笔标注"; case .bookmark: kind = "重点标记"; case .frame: kind = "录屏截图" }
+            framePicker.addItem(withTitle: String(format: "%.2f 秒 · %@", anchor.timestamp, kind))
+        }
+    }
     @objc private func showSelectedFrame() {
         let index = framePicker.indexOfSelectedItem
-        guard let anchors = project?.anchors, anchors.indices.contains(index), let url = try? store?.resolveRelativePath(anchors[index].imageRelativePath, requireExisting: true) else { preview.image = nil; return }
-        preview.image = NSImage(contentsOf: url)
+        if let anchors = project?.anchors, anchors.indices.contains(index), let url = try? store?.resolveRelativePath(anchors[index].imageRelativePath, requireExisting: true) {
+            preview.image = NSImage(contentsOf: url)
+        } else { preview.image = nil }
+        previewEmpty.isHidden = preview.image != nil
+        updateInterface()
     }
     private func assignFrame(replacing: Bool) {
-        guard let index = cardIndex, let anchors = project?.anchors, anchors.indices.contains(framePicker.indexOfSelectedItem) else { return }
+        guard !busy, commitTiming(), let index = cardIndex, let anchors = project?.anchors, anchors.indices.contains(framePicker.indexOfSelectedItem) else { return }
         let id = anchors[framePicker.indexOfSelectedItem].id
         if replacing { project?.reviewCards[index].frameIDs = [id] } else if project?.reviewCards[index].frameIDs.contains(id) == false { project?.reviewCards[index].frameIDs.append(id) }
-        do { try persist(); loadCard(); table.reloadData() } catch { fail(error) }
+        do { try persist(); loadCard(); updateVisibleCard(at: index) } catch { fail(error) }
     }
     @objc private func replaceFrame() { assignFrame(replacing: true) }
     @objc private func appendFrame() { assignFrame(replacing: false) }
-    @objc private func clearFrames() { guard let index = cardIndex else { return }; project?.reviewCards[index].frameIDs = []; do { try persist(); loadCard(); table.reloadData() } catch { fail(error) } }
+    @objc private func clearFrames() { guard !busy, commitTiming(), let index = cardIndex else { return }; project?.reviewCards[index].frameIDs = []; do { try persist(); loadCard(); updateVisibleCard(at: index) } catch { fail(error) } }
     @objc private func extractManualFrame() {
-        guard let index = cardIndex, let store = store, let recording = project?.recording, let timestamp = Double(frameTimeField.stringValue), timestamp.isFinite, timestamp >= 0, timestamp <= recording.durationSeconds else { report("请选择卡片，并输入录制范围内的秒数。"); return }
+        guard !busy, commitTiming(), let index = cardIndex, let store = store, let recording = project?.recording, let timestamp = Double(frameTimeField.stringValue), timestamp.isFinite, timestamp >= 0, timestamp <= recording.durationSeconds else { report("请选择卡片，并输入录制范围内的秒数。"); return }
         do { let (image, actual) = try VisualCapture.movieFrame(url: store.resolveRelativePath(recording.relativePath, requireExisting: true), at: timestamp); try addAnchor(image: image, timestamp: actual, kind: .frame, store: store); if let id = project?.anchors.last?.id { project?.reviewCards[index].frameIDs.append(id) }; try persist(); refresh(); loadCard() } catch { fail(error) }
     }
     @objc private func exportHTML() { export(bundle: false) }
     @objc private func exportBundle() { export(bundle: true) }
     private func export(bundle: Bool) {
-        guard let project = project, let store = store else { return }
+        guard !busy, commitTiming(), let project = project, let store = store else { return }
         guard !project.reviewCards.isEmpty || !project.transcripts.isEmpty else { report("请先转写或添加讲解卡片，再导出。"); return }
         let panel = NSSavePanel(); panel.title = bundle ? "保存图片与 Markdown 文件夹" : "保存独立 HTML"; panel.nameFieldStringValue = bundle ? "Point-and-Tell-export" : "Point-and-Tell.html"
         guard panel.runModal() == .OK, let url = panel.url else { return }

@@ -25,6 +25,7 @@ else
   cp "${BINARIES[0]}" "$APP/Contents/MacOS/PointAndTell"
 fi
 cp Resources/Info.plist "$APP/Contents/Info.plist"
+cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
 chmod +x "$APP/Contents/MacOS/PointAndTell"
 # Ad-hoc signature, no Developer ID or notarization credentials.
 codesign --force --deep --sign - "$APP"
@@ -48,6 +49,10 @@ with zipfile.ZipFile(p) as z:
     executable=z.getinfo('Point & Tell.app/Contents/MacOS/PointAndTell')
     assert (executable.external_attr >> 16) & 0o111, 'ZIP lost executable permissions'
     assert z.testzip() is None
+    import plistlib
+    info = plistlib.loads(z.read('Point & Tell.app/Contents/Info.plist'))
+    icon = z.read('Point & Tell.app/Contents/Resources/' + info['CFBundleIconFile'])
+    assert icon[:4] == b'icns', 'App icon is missing or invalid'
 manifest={
  'version':os.environ['VERSION'],
  'source_commit':os.environ.get('SOURCE_COMMIT') or subprocess.check_output(['git','rev-parse','HEAD'],text=True).strip(),
