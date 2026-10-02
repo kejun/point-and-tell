@@ -36,12 +36,90 @@ public struct ASRResult: Equatable {
 }
 
 /// The failing step, independent of provider text or an underlying error's userInfo.
-public enum ASRFailureStage: String, Equatable {
+public enum ASRFailureStage: String, Codable, Equatable, Sendable {
     case requestValidation = "Request validation"
     case transport = "Transport"
     case http = "HTTP"
     case provider = "Provider"
     case responseParsing = "Response parsing"
+}
+
+/// A small, app-owned support diagnostic. It can be created from typed ASR errors
+/// only; the client has already redacted the current key before emitting those.
+/// Provider messages, underlying errors, audio and request/response bodies have no
+/// representation in this type. ProjectStore revalidates it at both boundaries.
+public struct ASRDiagnostic: Codable, Equatable, Sendable {
+    public let stage: ASRFailureStage
+    public let httpStatus: Int?
+    public let code: String?
+    public let requestID: String?
+    // Retains only the fact that decoding discarded unsafe fields, never their text.
+    // ProjectStore uses this difference to rewrite a sanitized imported manifest.
+    private let requiresSanitization: Bool
+
+    public init?(error: Error) {
+        guard let error = error as? ASRError else { return nil }
+        switch error {
+        case .httpStatus(let status, let code, let requestID):
+            self.init(stage: error.stage, httpStatus: status, code: code, requestID: requestID)
+        case .provider(let code, let requestID):
+            self.init(stage: error.stage, code: code, requestID: requestID)
+        default:
+            self.init(stage: error.stage)
+        }
+    }
+
+    private init(stage: ASRFailureStage, httpStatus: Int? = nil, code: String? = nil,
+                 requestID: String? = nil, forceRewrite: Bool = false) {
+        self.stage = stage
+        self.httpStatus = stage == .http ? httpStatus.flatMap { (100...599).contains($0) ? $0 : nil } : nil
+        let providerStep = stage == .http || stage == .provider
+        self.code = providerStep ? ASRSafeDiagnostics.code(code) : nil
+        self.requestID = providerStep ? ASRSafeDiagnostics.requestID(requestID) : nil
+        self.requiresSanitization = forceRewrite || self.httpStatus != httpStatus
+            || self.code != code || self.requestID != requestID
+    }
+
+    /// Render only validated structured fields, including IDs that the generic
+    /// free-text scrubber must continue to remove from arbitrary error messages.
+    public var safeSummary: String {
+        var fields: [String] = []
+        if let status = httpStatus { fields.append("HTTP \(status)") }
+        if let code = code { fields.append("code \(code)") }
+        if let requestID = requestID { fields.append("request ID \(requestID)") }
+        return "ASR [\(stage.rawValue)]" + (fields.isEmpty ? "" : ": " + fields.joined(separator: "; "))
+    }
+
+    var sanitized: ASRDiagnostic {
+        ASRDiagnostic(stage: stage, httpStatus: httpStatus, code: code, requestID: requestID)
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case stage, httpStatus, code, requestID
+        // Recognize an injected message solely so an imported manifest is rewritten.
+        case message
+    }
+
+    public init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        let stage = try container.decode(ASRFailureStage.self, forKey: .stage)
+        let status = try? container.decode(Int.self, forKey: .httpStatus)
+        let code = try? container.decode(String.self, forKey: .code)
+        let requestID = try? container.decode(String.self, forKey: .requestID)
+        let malformedField = (container.contains(.httpStatus) && status == nil)
+            || (container.contains(.code) && code == nil)
+            || (container.contains(.requestID) && requestID == nil)
+        self.init(stage: stage, httpStatus: status, code: code, requestID: requestID,
+                  forceRewrite: malformedField || container.contains(.message))
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(stage, forKey: .stage)
+        try container.encodeIfPresent(httpStatus, forKey: .httpStatus)
+        try container.encodeIfPresent(code, forKey: .code)
+        try container.encodeIfPresent(requestID, forKey: .requestID)
+    }
 }
 
 public enum ASRError: Error, LocalizedError, Equatable {
@@ -227,18 +305,12 @@ enum ASRSafeDiagnostics {
         let lower = value.lowercased()
         guard !["sk-", "sk_", "bearer", "data", "authorization", "base64", "uklg"]
             .contains(where: { lower.hasPrefix($0) }) else { return nil }
-        let allowed = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_")
-        guard value.unicodeScalars.allSatisfy({ allowed.contains($0) }) else { return nil }
-        // Long opaque payloads are omitted; UUIDs and short segmented request IDs remain.
-        let parts = value.split(whereSeparator: { $0 == "-" || $0 == "_" })
-        guard !parts.isEmpty, parts.allSatisfy({ $0.count <= 32 }) else { return nil }
-        if parts.count == 1 {
-            let hex = CharacterSet(charactersIn: "0123456789abcdefABCDEF")
-            let digits = CharacterSet.decimalDigits
-            let shortID = value.count <= 16 && value.unicodeScalars.contains(where: { digits.contains($0) })
-            let hexID = value.count == 32 && value.unicodeScalars.allSatisfy({ hex.contains($0) })
-            guard shortID || hexID else { return nil }
-        }
+        // Provider IDs are UUIDs or 32 hexadecimal characters. Arbitrary
+        // hyphenated words or token fragments are not evidence of a request ID.
+        let hex = CharacterSet(charactersIn: "0123456789abcdefABCDEF")
+        let hexID = value.count == 32 && value.unicodeScalars.allSatisfy { hex.contains($0) }
+        let uuidID = UUID(uuidString: value).map { $0.uuidString.caseInsensitiveCompare(value) == .orderedSame } ?? false
+        guard hexID || uuidID else { return nil }
         return value
     }
 

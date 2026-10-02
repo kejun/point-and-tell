@@ -25,29 +25,29 @@ final class ASRErrorTests: XCTestCase {
     }
 
     func testHTTPStatusCodeRequestIDAndMappedReasonAreVisible() {
-        let error = ASRError.httpStatus(401, code: "InvalidApiKey", requestID: "req-123")
+        let error = ASRError.httpStatus(401, code: "InvalidApiKey", requestID: "66666666-6666-4666-8666-666666666666")
         let text = error.localizedDescription
         XCTAssertTrue(text.contains("[HTTP]"))
         XCTAssertTrue(text.contains("HTTP 401"))
         XCTAssertTrue(text.contains("code InvalidApiKey"))
-        XCTAssertTrue(text.contains("request ID req-123"))
+        XCTAssertTrue(text.contains("request ID 66666666-6666-4666-8666-666666666666"))
         XCTAssertTrue(text.contains("Authentication was rejected"))
     }
 
     func testProviderFailureIncludesSafeMetadataButNeverProviderMessage() throws {
         let payload: [String: Any] = [
             "code": "InvalidParameter",
-            "request_id": "req-123",
+            "request_id": "66666666-6666-4666-8666-666666666666",
             "message": "Authorization: Bearer synthetic-private-key; https://example.invalid/private; data:audio/wav;base64,UklGRPRIVATE; secret speech transcript",
             "output": ["echoed_request": "never display this"]
         ]
         let data = try JSONSerialization.data(withJSONObject: payload)
         XCTAssertThrowsError(try ASRResponseParser.parse(data: data)) {
-            XCTAssertEqual($0 as? ASRError, .provider(code: "InvalidParameter", requestID: "req-123"))
+            XCTAssertEqual($0 as? ASRError, .provider(code: "InvalidParameter", requestID: "66666666-6666-4666-8666-666666666666"))
             let text = ASRError.safeDescription(for: $0)
             XCTAssertTrue(text.contains("[Provider]"))
             XCTAssertTrue(text.contains("code InvalidParameter"))
-            XCTAssertTrue(text.contains("request ID req-123"))
+            XCTAssertTrue(text.contains("request ID 66666666-6666-4666-8666-666666666666"))
             XCTAssertTrue(text.contains("request parameter"))
             for secret in ["synthetic-private-key", "https://", "data:audio", "UklGRPRIVATE", "secret speech", "echoed_request"] {
                 XCTAssertFalse(text.contains(secret))
@@ -59,10 +59,10 @@ final class ASRErrorTests: XCTestCase {
         let data = try JSONSerialization.data(withJSONObject: [
             "code": "PrivateSpeechToken",
             "message": "The provided key synthetic-private-key was invalid.",
-            "request_id": "req-unknown"
+            "request_id": "77777777-7777-4777-8777-777777777777"
         ])
         XCTAssertThrowsError(try ASRResponseParser.parse(data: data)) {
-            XCTAssertEqual($0 as? ASRError, .provider(code: "UnrecognizedProviderError", requestID: "req-unknown"))
+            XCTAssertEqual($0 as? ASRError, .provider(code: "UnrecognizedProviderError", requestID: "77777777-7777-4777-8777-777777777777"))
             XCTAssertFalse(String(describing: $0).contains("PrivateSpeechToken"))
             XCTAssertFalse($0.localizedDescription.contains("synthetic-private-key"))
             XCTAssertTrue($0.localizedDescription.contains("No safe reason"))
@@ -83,10 +83,10 @@ final class ASRErrorTests: XCTestCase {
         let values = [
             "https://example.invalid/private", "data:audio/wav;base64,UklGR",
             "Bearer synthetic-private-key", "sk-secret", "authorization-secret",
-            "req-123\nsecret", "req-123\u{202E}secret", "私密内容",
+            "66666666-6666-4666-8666-666666666666\nsecret", "66666666-6666-4666-8666-666666666666\u{202E}secret", "私密内容",
             "UklGRiYAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQIAAAAAAA==",
             String(repeating: "A", count: 1000), "plainprivateword",
-            "{\"request\":\"private\"}", "speech with spaces"
+            "{\"request\":\"private\"}", "speech with spaces", "private-speech-transcript", "PRIVATE_TOKEN", "api-key-fragment", "req-123", "fixture-error"
         ]
         for value in values {
             XCTAssertNil(ASRSafeDiagnostics.requestID(value), value)
@@ -111,7 +111,7 @@ final class ASRErrorTests: XCTestCase {
     }
 
     func testAllowlistedCodeThatEqualsTheKeyIsStillRedacted() throws {
-        let data = Data(#"{"code":"InvalidApiKey","request_id":"req-123"}"#.utf8)
+        let data = Data(#"{"code":"InvalidApiKey","request_id":"66666666-6666-4666-8666-666666666666"}"#.utf8)
         let metadata = ASRResponseParser.errorMetadata(data, redactingSecrets: ["InvalidApiKey"])
         XCTAssertNil(metadata.code)
         XCTAssertThrowsError(try ASRResponseParser.parse(data: data, redactingSecrets: ["InvalidApiKey"])) {
@@ -120,7 +120,7 @@ final class ASRErrorTests: XCTestCase {
     }
 
     func testValidRequestIdentifiersRemainAvailable() {
-        for value in ["req-123", "fixture-error", "request_001",
+        for value in ["66666666-6666-4666-8666-666666666666", "55555555-5555-4555-8555-555555555555", "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
                       "21da954f-704d-4931-8fe5-444d8e6fe33f",
                       "21da954f704d49318fe5444d8e6fe33f"] {
             XCTAssertEqual(ASRSafeDiagnostics.requestID(value), value)
@@ -128,20 +128,20 @@ final class ASRErrorTests: XCTestCase {
     }
 
     func testHTTPMetadataSurvivesMalformedOutputAndUntrustedMessageShape() {
-        let data = Data(#"{"code":"InvalidParameter","request_id":"req-456","message":{"request":"secret"},"output":17}"#.utf8)
+        let data = Data(#"{"code":"InvalidParameter","request_id":"88888888-8888-4888-8888-888888888888","message":{"request":"secret"},"output":17}"#.utf8)
         let metadata = ASRResponseParser.errorMetadata(data)
         XCTAssertEqual(metadata.code, "InvalidParameter")
-        XCTAssertEqual(metadata.requestID, "req-456")
+        XCTAssertEqual(metadata.requestID, "88888888-8888-4888-8888-888888888888")
         XCTAssertThrowsError(try ASRResponseParser.parse(data: data)) {
-            XCTAssertEqual($0 as? ASRError, .provider(code: "InvalidParameter", requestID: "req-456"))
+            XCTAssertEqual($0 as? ASRError, .provider(code: "InvalidParameter", requestID: "88888888-8888-4888-8888-888888888888"))
         }
     }
 
     func testSSEErrorAfterFinalTextCannotLeakProviderMessage() {
-        let event = #"{"code":"InvalidParameter","message":"Bearer private-key","request_id":"req-789"}"#
+        let event = #"{"code":"InvalidParameter","message":"Bearer private-key","request_id":"99999999-9999-4999-8999-999999999999"}"#
         let data = Data("data: \(ASRFixtures.json)\n\ndata: \(event)\n\n".utf8)
         XCTAssertThrowsError(try ASRResponseParser.parse(data: data)) {
-            XCTAssertEqual($0 as? ASRError, .provider(code: "InvalidParameter", requestID: "req-789"))
+            XCTAssertEqual($0 as? ASRError, .provider(code: "InvalidParameter", requestID: "99999999-9999-4999-8999-999999999999"))
             XCTAssertFalse($0.localizedDescription.contains("private-key"))
         }
     }

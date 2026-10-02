@@ -34,6 +34,7 @@ enum AudioChunkerSmokeTest {
         let sourceCodec: String
         let sourceSampleRateHz: Int32
         let sourceDurationSeconds: Double
+        let sourceTrackSpanDurationSeconds: Double
         let sourceDecodedFrames: Int64
         let rmsDBFS: Double
         let peakDBFS: Double
@@ -135,9 +136,20 @@ enum AudioChunkerSmokeTest {
             let report = try AudioInspector.inspect(movieURL: source)
             try require(report.audioTrackPresent && report.decodedFrameCount > 0, "\(fixture.name): source inspector lost samples")
             try require(abs(report.durationSeconds - Double(fixture.seconds)) < fixture.timingTolerance,
-                        "\(fixture.name): source audio duration \(report.durationSeconds)")
+                        "\(fixture.name): decoded audio duration \(report.durationSeconds), frames \(report.decodedFrameCount), track span \(report.trackSpanDurationSeconds)")
             try require(abs(Double(report.decodedFrameCount) / Double(sampleRate) - Double(fixture.seconds)) < fixture.timingTolerance,
                         "\(fixture.name): decoded source sample count is wrong")
+            try require(abs(report.durationSeconds - Double(report.decodedFrameCount) / Double(sampleRate)) <= 1.0 / Double(sampleRate),
+                        "\(fixture.name): reported sample duration includes empty timeline edits")
+            try require(abs(report.trackSpanDurationSeconds - CMTimeGetSeconds(audio.timeRange.duration)) <= 1.0 / Double(sampleRate),
+                        "\(fixture.name): source track span was not preserved separately")
+            if fixture.offset > 0 {
+                let movieDuration = CMTimeGetSeconds(asset.duration)
+                try require(abs(movieDuration - Double(fixture.seconds) - fixture.offset) <= fixture.timingTolerance,
+                            "\(fixture.name): delayed fixture movie does not include its initial empty edit")
+                try require(abs(movieDuration - report.durationSeconds - fixture.offset) <= fixture.timingTolerance,
+                            "\(fixture.name): decoded duration was confused with the movie timeline")
+            }
             try require(report.rmsDBFS.isFinite && report.peakDBFS.isFinite, "inspection produced non-finite decibels")
             // Exact digital silence is represented by finite -120 dBFS values,
             // so the diagnostic can be safely encoded into JSON.
@@ -180,6 +192,7 @@ enum AudioChunkerSmokeTest {
             }
             fixtureResults.append(FixtureResult(name: fixture.name, sourceCodec: "AAC",
                 sourceSampleRateHz: fixture.rate, sourceDurationSeconds: report.durationSeconds,
+                sourceTrackSpanDurationSeconds: report.trackSpanDurationSeconds,
                 sourceDecodedFrames: report.decodedFrameCount, rmsDBFS: report.rmsDBFS,
                 peakDBFS: report.peakDBFS, suspectedSilence: report.suspectedSilence,
                 chunkDurationsSeconds: chunks.map(\.durationSeconds),
@@ -226,6 +239,8 @@ enum AudioChunkerSmokeTest {
                                 "WAV inspector sample count disagrees with the WAV header")
                     try require(abs(inspection.durationSeconds - parsed.durationSeconds) <= frameTolerance,
                                 "WAV inspection duration disagrees with PCM sample count")
+                    try require(abs(inspection.trackSpanDurationSeconds - parsed.durationSeconds) <= frameTolerance,
+                                "WAV track span disagrees with PCM sample count")
                     if fixture.amplitude == 0 {
                         try require(inspection.suspectedSilence && inspection.rmsDBFS < -70,
                                     "silent WAV should succeed with a soft amplitude warning")

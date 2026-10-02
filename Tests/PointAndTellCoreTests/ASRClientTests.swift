@@ -98,7 +98,7 @@ final class ASRClientTests: XCTestCase {
             switch result {
             case .success: XCTFail("Unauthorized response accepted")
             case .failure(let error):
-                XCTAssertEqual(error as? ASRError, .httpStatus(401, code: "InvalidApiKey", requestID: "fixture-error"))
+                XCTAssertEqual(error as? ASRError, .httpStatus(401, code: "InvalidApiKey", requestID: "55555555-5555-4555-8555-555555555555"))
                 XCTAssertFalse(error.localizedDescription.contains("offline-test-key"))
                 XCTAssertFalse(error.localizedDescription.contains("Provider detail"))
             }
@@ -223,6 +223,28 @@ final class ASRClientTests: XCTestCase {
         }
         wait(for: [finished], timeout: 2)
         XCTAssertEqual(transport.requests.count, 1)
+    }
+
+
+    func testClientRedactsUUIDShapedKeyBeforeCreatingPersistentDiagnostic() {
+        let key = "21da954f-704d-4931-8fe5-444d8e6fe33f"
+        let body = #"{"code":"InvalidApiKey","request_id":"21da954f-704d-4931-8fe5-444d8e6fe33f"}"#
+        for status in [401, 200] {
+            let transport = ASRStubTransport()
+            transport.response = .success(ASRHTTPResponse(statusCode: status, data: Data(body.utf8)))
+            let finished = expectation(description: "UUID key redaction")
+            ASRClient(transport: transport).transcribe(wav: ASRFixtures.tinyWAV, apiKey: key) { result in
+                if case .failure(let error) = result {
+                    let diagnostic = ASRDiagnostic(error: error)
+                    XCTAssertNotNil(diagnostic)
+                    XCTAssertNil(diagnostic?.requestID)
+                    XCTAssertFalse(diagnostic?.safeSummary.contains(key) ?? false)
+                    XCTAssertFalse(error.localizedDescription.contains(key))
+                } else { XCTFail("Rejected request was accepted") }
+                finished.fulfill()
+            }
+            wait(for: [finished], timeout: 2)
+        }
     }
 
 }

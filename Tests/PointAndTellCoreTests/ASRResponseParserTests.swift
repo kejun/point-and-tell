@@ -4,7 +4,7 @@ import XCTest
 final class ASRResponseParserTests: XCTestCase {
     func testJSONFixturePreservesProviderMilliseconds() throws {
         let result = try parse(ASRFixtures.json)
-        XCTAssertEqual(result.requestID, "fixture-json")
+        XCTAssertEqual(result.requestID, "11111111-1111-4111-8111-111111111111")
         XCTAssertEqual(result.sentences, [ASRSentence(text: "Hello world.", beginTimeMilliseconds: 760,
                                                      endTimeMilliseconds: 3800, sentenceID: 1, channelID: 0)])
         XCTAssertTrue(result.sentences[0].hasCompleteTiming)
@@ -43,7 +43,7 @@ final class ASRResponseParserTests: XCTestCase {
         let result = try ASRResponseParser.parse(data: Data(ASRFixtures.sse.utf8), contentType: "text/event-stream; charset=utf-8")
         XCTAssertEqual(result.sentences.map(\.text), ["First.", "第二句。"])
         XCTAssertEqual(result.sentences.map(\.beginTimeMilliseconds), [100, 1100])
-        XCTAssertEqual(result.requestID, "fixture-sse")
+        XCTAssertEqual(result.requestID, "44444444-4444-4444-8444-444444444444")
     }
 
     func testSSECRLFAndUnterminatedLastEvent() throws {
@@ -80,7 +80,7 @@ final class ASRResponseParserTests: XCTestCase {
     func testProviderErrorStopsWholeResponseEvenAfterFinalSentence() {
         let payload = "data: \(ASRFixtures.json)\n\ndata: \(ASRFixtures.providerError)\n\n"
         XCTAssertThrowsError(try parse(payload)) {
-            XCTAssertEqual($0 as? ASRError, .provider(code: "InvalidApiKey", requestID: "fixture-error"))
+            XCTAssertEqual($0 as? ASRError, .provider(code: "InvalidApiKey", requestID: "55555555-5555-4555-8555-555555555555"))
             XCTAssertFalse($0.localizedDescription.contains("Provider detail"))
         }
     }

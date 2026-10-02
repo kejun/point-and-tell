@@ -122,9 +122,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         editItem.submenu = edit; NSApp.mainMenu = menu
     }
     private func makeWindow() {
-        window = NSWindow(contentRect: NSRect(x: 120, y: 120, width: 1060, height: 780), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window = NSWindow(contentRect: NSRect(x: 120, y: 120, width: 1060, height: 760), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Point & Tell · 指指点点"; window.delegate = self; window.minSize = NSSize(width: 860, height: 650)
-        let content = NSStackView(); content.orientation = .vertical; content.alignment = .leading; content.spacing = 12
+        let content = NSStackView(); content.orientation = .vertical; content.alignment = .leading; content.spacing = 8
         content.edgeInsets = NSEdgeInsets(top: 18, left: 18, bottom: 18, right: 18)
         screens = NSScreen.screens
         for (index, screen) in screens.enumerated() { screenPicker.addItem(withTitle: "屏幕 \(index + 1) · \(screen.localizedName)") }
@@ -136,7 +136,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         content.addArrangedSubview(row([label("麦克风"), microphonePicker,
             button("刷新设备", #selector(refreshMicrophones), idleOnly: true),
             button("本地试听录屏", #selector(playRecording), idleOnly: true)]))
-        statusLabel.maximumNumberOfLines = 3; statusLabel.font = .systemFont(ofSize: 12); content.addArrangedSubview(statusLabel)
+        statusLabel.maximumNumberOfLines = 2; statusLabel.font = .systemFont(ofSize: 12); content.addArrangedSubview(statusLabel)
         apiKeyField.placeholderString = "阿里云 API Key，仅本次内存保存"; apiKeyField.widthAnchor.constraint(equalToConstant: 295).isActive = true
         cancelASRButton = button("取消转写", #selector(cancelASR)); cancelASRButton.isEnabled = false
         content.addArrangedSubview(row([apiKeyField, button("转写 / 重试失败片段", #selector(transcribe), idleOnly: true), cancelASRButton]))
@@ -358,7 +358,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                 let duration = AVURLAsset(url: movie).duration.seconds
                 if duration.isFinite && duration > 0 { project?.recording?.durationSeconds = duration; try persist() }
             }
-            report("已打开 \(project?.title ?? "项目")。原始录制与失败片段已保留。"); refresh() } catch { fail(error) }
+            if let failed = project?.asrChunks.first(where: { $0.state == .failed }) {
+                report("已打开项目。上次转写失败：" + (failed.diagnostic?.safeSummary ?? failed.errorMessage ?? "请重试失败片段"))
+            } else {
+                report("已打开 \(project?.title ?? "项目")。原始录制与失败片段已保留。")
+            }
+            refresh() } catch { fail(error) }
     }
     @objc private func revealProject() { if let url = store?.folderURL { NSWorkspace.shared.activateFileViewerSelecting([url]) } }
 
@@ -449,6 +454,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                 } catch {
                     self.project?.asrChunks[index].state = .failed
                     self.project?.asrChunks[index].errorMessage = ASRChunk.sanitizedError("[WAV inspection] " + error.localizedDescription)
+                    self.project?.asrChunks[index].diagnostic = nil
                     try? self.persist(); self.stopForAudioError(error, stage: "WAV 检查")
                 }
             }
@@ -456,7 +462,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     }
 
     private func sendChunk(index: Int, chunk: ASRChunk, wav: Data, apiKey: String) {
-        activeChunkID = chunk.id; project?.asrChunks[index].state = .transcribing; project?.asrChunks[index].errorMessage = nil
+        activeChunkID = chunk.id; project?.asrChunks[index].state = .transcribing; project?.asrChunks[index].errorMessage = nil; project?.asrChunks[index].diagnostic = nil
         do {
             try persist()
             let completed = project?.asrChunks.filter { $0.state == .complete }.count ?? 0
@@ -473,12 +479,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     self.project?.asrChunks[index].state = self.cancelRequested ? .pending : .failed
                     let safe = ASRError.safeDescription(for: error)
                     self.project?.asrChunks[index].errorMessage = safe
+                    self.project?.asrChunks[index].diagnostic = ASRDiagnostic(error: error)
                     try? self.persist(); self.finishASR(cancelled: self.cancelRequested)
                     if !self.cancelRequested { self.report(safe); self.fail(NSError(domain: "PointAndTell.ASR", code: 1, userInfo: [NSLocalizedDescriptionKey: safe])) }; return
                 }
                 do { try self.persist(); self.processNextChunk(apiKey: apiKey) } catch { self.finishASR(cancelled: false); self.fail(error) }
             }
-        } catch { project?.asrChunks[index].state = .failed; project?.asrChunks[index].errorMessage = ASRChunk.sanitizedError(error.localizedDescription); try? persist(); finishASR(cancelled: false); fail(error) }
+        } catch { project?.asrChunks[index].state = .failed; project?.asrChunks[index].diagnostic = nil; project?.asrChunks[index].errorMessage = ASRChunk.sanitizedError(error.localizedDescription); try? persist(); finishASR(cancelled: false); fail(error) }
     }
     @objc private func cancelASR() { cancelRequested = true; asrTask?.cancel(); if asrTask == nil { report("将在当前本地步骤结束后取消；已完成的音频片段保留。") } }
     private func finishASR(cancelled: Bool) {

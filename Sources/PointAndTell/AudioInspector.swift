@@ -8,8 +8,11 @@ import CoreMedia
 /// still contain useful speech, so suspectedSilence must never be a hard error.
 struct AudioInspectionReport: Codable, Equatable {
     let audioTrackPresent: Bool
-    /// Duration of the source audio track, without its initial movie offset.
+    /// Duration represented by decoded PCM frames, excluding empty timeline
+    /// edits such as an initial delay before the microphone's first sample.
     let durationSeconds: Double
+    /// Container track span; may include empty edits and is not sample duration.
+    let trackSpanDurationSeconds: Double
     let decodedFrameCount: Int64
     let rmsDBFS: Double
     let peakDBFS: Double
@@ -17,7 +20,7 @@ struct AudioInspectionReport: Codable, Equatable {
 
     /// Contains no source path, decoder text, media bytes, or provider data.
     var safeSummary: String {
-        let levels = String(format: "%.2f s, %lld decoded frames, RMS %.1f dBFS, peak %.1f dBFS",
+        let levels = String(format: "%.2f s decoded, %lld frames, RMS %.1f dBFS, peak %.1f dBFS",
                             durationSeconds, decodedFrameCount, rmsDBFS, peakDBFS)
         return levels + (suspectedSilence ? "; very low signal (amplitude only, not speech detection)" : "")
     }
@@ -53,8 +56,11 @@ enum AudioInspector {
         guard let track = asset.tracks(withMediaType: .audio).first else {
             throw InspectionError.noAudioTrack
         }
-        let duration = CMTimeGetSeconds(track.timeRange.duration)
-        guard duration.isFinite, duration >= 0 else { throw InspectionError.invalidDuration }
+        // AVAssetWriter can put an initial empty edit inside this time range:
+        // a 2 s signal starting at movie time 0.375 s can have a 2.375 s span.
+        // Sample duration must therefore come from the decoded frame count.
+        let trackSpanDuration = CMTimeGetSeconds(track.timeRange.duration)
+        guard trackSpanDuration.isFinite, trackSpanDuration >= 0 else { throw InspectionError.invalidDuration }
         let reader: AVAssetReader
         do { reader = try AVAssetReader(asset: asset) }
         catch { throw InspectionError.decodeFailed((error as NSError).code) }
@@ -117,11 +123,13 @@ enum AudioInspector {
             if !consumed { break }
         }
         guard reader.status == .completed else { throw InspectionError.decodeFailed(reader.error.map { ($0 as NSError).code } ?? 0) }
-        guard frameCount > 0, duration > 0 else { throw InspectionError.noDecodedSamples }
+        guard frameCount > 0, trackSpanDuration > 0 else { throw InspectionError.noDecodedSamples }
+        let decodedDuration = Double(frameCount) / Double(sampleRate)
         let rms = sqrt(sumSquares / Double(frameCount))
         let rmsDBFS = rms > 0 ? max(minimumDBFS, 20 * log10(rms)) : minimumDBFS
         let peakDBFS = peak > 0 ? max(minimumDBFS, 20 * log10(peak)) : minimumDBFS
-        return AudioInspectionReport(audioTrackPresent: true, durationSeconds: duration,
+        return AudioInspectionReport(audioTrackPresent: true, durationSeconds: decodedDuration,
+                                     trackSpanDurationSeconds: trackSpanDuration,
                                      decodedFrameCount: frameCount, rmsDBFS: rmsDBFS,
                                      peakDBFS: peakDBFS, suspectedSilence: rmsDBFS < silenceThresholdDBFS)
     }

@@ -4,9 +4,9 @@ import Foundation
 enum ASRFixtures {
     static let tinyWAV = Data(base64Encoded: "UklGRiYAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQIAAAAAAA==")!
     static let request = #"{"model":"qwen-audio-3.0-asr-flash","input":{"messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQIAAAAAAA=="}}]}]},"parameters":{"format":"wav","sample_rate":"16000"}}"#
-    static let json = #"{"output":{"sentence":{"begin_time":760,"end_time":3800,"sentence_end":true,"sentence_id":1,"channel_id":0,"text":"Hello world."},"text":"Hello world."},"usage":{"duration":4},"request_id":"fixture-json"}"#
-    static let nestedJSON = #"{"output":{"output":{"sentence":{"begin_time":100,"end_time":900,"sentence_end":true,"sentence_id":1,"text":"Nested."}}},"request_id":"fixture-nested"}"#
-    static let missingTimingJSON = #"{"output":{"sentence":{"sentence_end":true,"sentence_id":1,"text":"No timing supplied."}},"request_id":"fixture-untimed"}"#
+    static let json = #"{"output":{"sentence":{"begin_time":760,"end_time":3800,"sentence_end":true,"sentence_id":1,"channel_id":0,"text":"Hello world."},"text":"Hello world."},"usage":{"duration":4},"request_id":"11111111-1111-4111-8111-111111111111"}"#
+    static let nestedJSON = #"{"output":{"output":{"sentence":{"begin_time":100,"end_time":900,"sentence_end":true,"sentence_id":1,"text":"Nested."}}},"request_id":"22222222-2222-4222-8222-222222222222"}"#
+    static let missingTimingJSON = #"{"output":{"sentence":{"sentence_end":true,"sentence_id":1,"text":"No timing supplied."}},"request_id":"33333333-3333-4333-8333-333333333333"}"#
     static let partialTimingJSON = #"{"output":{"sentence":{"begin_time":200,"sentence_end":true,"text":"Only a start."}}}"#
     static let fullTextJSON = #"{"output":{"sentence":{"begin_time":1500,"end_time":2000,"sentence_end":true,"text":"Second."},"text":"First. Second."}}"#
     static let sse = """
@@ -14,20 +14,20 @@ enum ASRFixtures {
     id:1
     event:result
     :HTTP_STATUS/200
-    data:{"output":{"sentence":{"sentence_id":1,"sentence_end":false,"begin_time":0,"text":"interim"}},"request_id":"fixture-sse"}
+    data:{"output":{"sentence":{"sentence_id":1,"sentence_end":false,"begin_time":0,"text":"interim"}},"request_id":"44444444-4444-4444-8444-444444444444"}
 
     id:2
     event:result
-    data:{"output":{"sentence":{"sentence_id":1,"sentence_end":true,"begin_time":100,"end_time":900,"text":"First."}},"request_id":"fixture-sse"}
+    data:{"output":{"sentence":{"sentence_id":1,"sentence_end":true,"begin_time":100,"end_time":900,"text":"First."}},"request_id":"44444444-4444-4444-8444-444444444444"}
 
     id:3
     event:result
-    data: {"output":{"output":{"sentence":{"sentence_id":2,"sentence_end":true,"begin_time":1100,"end_time":2100,"text":"第二句。"}}},"request_id":"fixture-sse"}
+    data: {"output":{"output":{"sentence":{"sentence_id":2,"sentence_end":true,"begin_time":1100,"end_time":2100,"text":"第二句。"}}},"request_id":"44444444-4444-4444-8444-444444444444"}
 
     data:[DONE]
 
     """
-    static let providerError = #"{"code":"InvalidApiKey","message":"Provider detail must not be exposed or logged","request_id":"fixture-error"}"#
+    static let providerError = #"{"code":"InvalidApiKey","message":"Provider detail must not be exposed or logged","request_id":"55555555-5555-4555-8555-555555555555"}"#
 
     static func wav(seconds: Int, sampleRate: UInt32 = 16_000, channels: UInt16 = 1,
                     bitsPerSample: UInt16 = 16, extraMetadata: Bool = false) -> Data {
