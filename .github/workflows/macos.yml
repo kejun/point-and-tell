@@ -71,7 +71,7 @@ jobs:
         with:
           name: UI-smoke-evidence-${{ matrix.arch }}
           path: |
-            dist/ui-smoke/window.png
+            dist/ui-smoke/*.png
             dist/audio-smoke/**/results.json
             dist/committed-audio-smoke/**/results.json
             dist/committed-ui-smoke/window.png

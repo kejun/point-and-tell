@@ -36,3 +36,12 @@ Record a normal scrolling/clicking workflow with voice at 5 fps, then repeat at 
 ## Evidence labels
 
 Report separately: authored tests, tests executed/passed, macOS compiler result, package/signature verification, real device runtime, provider integration. Never describe unrun checks as passed.
+
+
+## v0.2.0 native workspace
+
+- Verify the chosen green app icon in Finder, Dock, About and the workspace sidebar after replacing an older copy.
+- At 980×680 content size and in dark appearance, inspect labels, list selection, editor scrolling and recording-toolbar bounds.
+- Type into one card, change its timing, switch cards, reopen the project and export: verify text and valid times persist. Invalid times must keep focus on the draft until corrected.
+- Select a card without images: its preview must be empty. Choosing a project screenshot only previews it; Add/Replace must explicitly change the exported attachment.
+- During transcription, ensure the cancel action is visible and conflicting new/open/edit/export actions are disabled. After cancellation, valid actions return.

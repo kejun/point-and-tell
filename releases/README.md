@@ -1,5 +1,19 @@
 # Download Point & Tell
 
+## v0.2.0 · Native workspace & app icon · Universal · macOS 11.0+
+
+[Download v0.2.0](v0.2.0/Point-and-Tell-v0.2.0-macOS-universal.zip?raw=true)
+
+A redesigned AppKit workspace with recording/transcription sidebar, numbered feedback cards, automatic text-save feedback, timing validation, screenshot assignment and a focused export menu. Includes the selected forest-teal app icon and light/dark appearances.
+
+- Archive: 2,222,988 bytes; Intel x86_64 + Apple Silicon arm64
+- Source commit: [4e552fe](https://github.com/kejun/point-and-tell/commit/4e552fe0844983a02a2600bf8f8abf72cdd857f8)
+- [Native build/test run](https://github.com/kejun/point-and-tell/actions/runs/36968091570)
+- [SHA-256](v0.2.0/Point-and-Tell-v0.2.0-macOS-universal.zip.sha256) · [exact source/build manifest](v0.2.0/build.json) · [UI screenshots](../docs/UI-DESIGN.md)
+- Ad-hoc signed, not Apple-notarized. Both slices target macOS 11.0.
+
+Native automated core, audio and UI checks cover the build. Actual macOS 11 permissions, physical microphone input and a billed ASR request still need device verification. Older releases below remain available for rollback.
+
 ## v0.1.1 · Audio diagnostics · Universal · macOS 11.0+
 
 [Download v0.1.1](v0.1.1/Point-and-Tell-v0.1.1-macOS-universal.zip?raw=true)
