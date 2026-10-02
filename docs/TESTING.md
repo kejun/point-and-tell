@@ -45,3 +45,13 @@ Report separately: authored tests, tests executed/passed, macOS compiler result,
 - Type into one card, change its timing, switch cards, reopen the project and export: verify text and valid times persist. Invalid times must keep focus on the draft until corrected.
 - Select a card without images: its preview must be empty. Choosing a project screenshot only previews it; Add/Replace must explicitly change the exported attachment.
 - During transcription, ensure the cancel action is visible and conflicting new/open/edit/export actions are disabled. After cancellation, valid actions return.
+
+
+## v0.3.0 workflow and frontmost recording toolbar
+
+- Fresh launch: the workspace and its menu shortcuts must remain unavailable until screen recording, microphone, connected devices, API key and automatic-upload consent are ready. Test denied permissions, permission-related relaunch and locked Keychain; failed saves must not admit the user.
+- Relaunch: reuse the saved key through Keychain, recheck current permissions/devices, and return to setup when a requirement is revoked. No remote request merely from launch or opening an old project.
+- Record and stop: valid speech automatically transcribes once; quiet/invalid audio pauses; cancel or failed requests do not automatically retry. Test a long recording with a quiet later chunk.
+- While recording, switch apps with ⌘Tab, click other windows, change Spaces, enter another app's full-screen Space, and use multiple displays. The HUD remains frontmost and draggable, does not take typing focus, and Stop still works.
+- Mark and enter pen mode: HUD must not blink or disappear; saved bookmark/pen PNGs must exclude controls. Stop during drawing must save the annotation and finalize exactly once. On stop/failure the HUD must disappear and not return after a Space change.
+- Native automated smoke tests exercise setup with injected permissions/key storage and verify panel policy, rendering and cleanup. They cannot prove real OS TCC, Keychain prompts or cross-application full-screen behavior; use physical macOS 11 and current macOS devices for those checks.

@@ -87,6 +87,21 @@ public struct TranscriptSegment: Codable, Equatable, Identifiable, Sendable {
         return start.isFinite && end.isFinite && start >= 0 && end >= start
     }
 
+    public var hasCompleteWordTiming: Bool {
+        guard isTimed, let words = words, !words.isEmpty,
+              words.map(\.text).joined().filter({ !$0.isWhitespace }) == text.filter({ !$0.isWhitespace }),
+              !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+        var previousStart = startSeconds!, previousEnd = startSeconds!
+        for word in words {
+            guard !word.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
+                  word.startSeconds.isFinite, word.endSeconds.isFinite,
+                  word.startSeconds >= previousStart, word.endSeconds >= previousEnd,
+                  word.endSeconds >= word.startSeconds, word.endSeconds <= endSeconds! else { return false }
+            previousStart = word.startSeconds; previousEnd = word.endSeconds
+        }
+        return true
+    }
+
     /// Use exactly once when converting a chunk-relative ASR result to recording time.
     public func offset(by seconds: Double) -> TranscriptSegment {
         guard seconds.isFinite, seconds >= 0 else {
@@ -134,6 +149,10 @@ public struct ASRChunk: Codable, Equatable, Identifiable, Sendable {
     public var sentences: [TranscriptSegment]
     public var errorMessage: String?
     public var diagnostic: ASRDiagnostic?
+
+    public var needsTimestampRetry: Bool {
+        state == .complete && (sentences.isEmpty || sentences.contains { !$0.hasCompleteWordTiming })
+    }
 
     public init(id: UUID = UUID(), index: Int = 0, relativePath: String, startSeconds: Double,
                 durationSeconds: Double, state: ASRChunkState = .pending,

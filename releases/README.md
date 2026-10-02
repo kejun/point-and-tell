@@ -1,5 +1,19 @@
 # Download Point & Tell
 
+## v0.3.0 · Ready-to-record workflow · Universal · macOS 11.0+
+
+[Download v0.3.0](v0.3.0/Point-and-Tell-v0.3.0-macOS-universal.zip?raw=true)
+
+Requires first-run screen/microphone permissions, available devices, a Keychain-stored API key and consent to automatic audio uploads before entering the workspace. Ending a new recording checks audio locally and automatically starts Qwen transcription. Quiet/invalid audio, cancellation and errors pause without automatic billed retries.
+
+The recording toolbar stays frontmost across app/Space changes, with full-screen support and no keyboard-focus theft. Bookmark and pen operations leave Stop visible; saved screenshots exclude the controls. Model `qwen-audio-3.0-asr-flash` results must provide a complete final sentence/word timeline. Missing/unfinished streamed sentences and incomplete JSON replies cannot be cached as success. Existing text and reviewed screenshot choices survive failed retries.
+
+- Intel x86_64 + Apple Silicon arm64, minimum macOS 11.0
+- [Exact source commit](https://github.com/kejun/point-and-tell/commit/171526f4d51a9bb9fde4ecec23c043ee341c3dc6) · [native build/test run](https://github.com/kejun/point-and-tell/actions/runs/37008223275)
+- 130 core tests on each architecture; native AAC audio chain, setup/HUD/UI smoke checks, and desktop/390px WebKit export rendering
+- [SHA-256](v0.3.0/Point-and-Tell-v0.3.0-macOS-universal.zip.sha256) · [build manifest](v0.3.0/build.json) · [setup flow](../docs/FIRST-RUN.md) · [Qwen protocol and validation](../docs/QWEN-ASR.md)
+- Ad-hoc signed, not Apple-notarized. Real macOS permission/Keychain dialogs, app/Space/full-screen switching and paid ASR alignment still require device verification; automated fixtures do not establish those behaviors.
+
 ## v0.2.1 · Timestamp-aligned exports · Universal · macOS 11.0+
 
 [Download v0.2.1](v0.2.1/Point-and-Tell-v0.2.1-macOS-universal.zip?raw=true)

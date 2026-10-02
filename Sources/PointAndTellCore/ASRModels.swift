@@ -59,6 +59,17 @@ public struct ASRResult: Equatable {
         self.sentences = sentences
         self.requestID = requestID
     }
+
+    /// Only a complete, verifiable sentence/word timeline may complete a chunk.
+    /// Parser fallbacks remain available for inspecting old/synthetic responses,
+    /// but text-only or partially timed live replies must not become cached success.
+    public func validatedSentences() throws -> [ASRSentence] {
+        guard !sentences.isEmpty else { throw ASRError.noFinalSentences }
+        guard sentences.allSatisfy({ $0.transcriptSegment(chunkOffset: 0).hasCompleteWordTiming }) else {
+            throw ASRError.incompleteTimestamps
+        }
+        return sentences
+    }
 }
 
 /// The failing step, independent of provider text or an underlying error's userInfo.
@@ -165,6 +176,7 @@ public enum ASRError: Error, LocalizedError, Equatable {
     case provider(code: String, requestID: String?)
     case malformedResponse
     case noFinalSentences
+    case incompleteTimestamps
 
     public var stage: ASRFailureStage {
         switch self {
@@ -173,7 +185,7 @@ public enum ASRError: Error, LocalizedError, Equatable {
         case .transport, .invalidHTTPResponse, .responseTooLarge: return .transport
         case .httpStatus: return .http
         case .provider: return .provider
-        case .malformedResponse, .noFinalSentences: return .responseParsing
+        case .malformedResponse, .noFinalSentences, .incompleteTimestamps: return .responseParsing
         }
     }
 
@@ -234,6 +246,8 @@ public enum ASRError: Error, LocalizedError, Equatable {
             detail = "The response was not valid finalized JSON/SSE. The audio was not marked complete. Check service compatibility or retry."
         case .noFinalSentences:
             detail = "The response contained no finalized transcript. Replay the local recording and check that speech is audible; silence or an incomplete response can cause this. The audio was not marked complete."
+        case .incompleteTimestamps:
+            detail = "qwen-audio-3.0-asr-flash 未返回覆盖全文的完整句/词时间戳。本片段未标记完成，原有文字与配图已保留。请检查服务配置后手动重试；仅有全文或末句时间不足以精确配图。"
         }
         return "ASR [\(stage.rawValue)]: \(detail)"
     }
@@ -381,5 +395,5 @@ public enum ASRProvider {
     public static let model = "qwen-audio-3.0-asr-flash"
     public static let integrationVerified = false
     public static let verificationNotice = "Provider integration unverified: only offline fixtures and transport stubs have been used."
-    public static let documentationURL = URL(string: "https://help.aliyun.com/en/model-studio/fun-asr-flash-recorded-speech-recognition-http-api")!
+    public static let documentationURL = URL(string: "https://www.qianwenai.com/models/qwen-audio-3.0-asr-flash")!
 }

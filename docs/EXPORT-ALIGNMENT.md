@@ -9,11 +9,11 @@ HTML and Markdown share one alignment plan, also included as `cards[].moments` i
 - If words are absent, invalid, incomplete, or no longer agree with edited text/times, keep the reviewed passage and selected pictures together and label the limitation. Manual selections are preserved; missing image files warn without rematching the speech to another image.
 - Short non-streaming replies may contain full text but timing for only the final sentence. Preserve that final sentence's real timing; leave preceding text explicitly untimed. Never assign the final sentence's time to the entire recording.
 
-Old projects without word timestamps still open. They retain sentence-level or manual alignment; exporting cannot recover timestamps that were never stored. The app does not silently re-upload audio or overwrite reviewed text to repair older results.
+Old projects without word timestamps still open and export at sentence/manual precision. In v0.3.0, **重新转写 · 补齐时间戳** offers to resend only incomplete completed chunks (plus ordinary pending/failed work) after explicit upload consent. Old results survive until a validated replacement succeeds; reviewed text and selected images are preserved. Exporting alone never uploads audio or invents timing.
 
 The two primary actions are directly visible above the workspace: **导出独立 HTML…** and **导出图片 + Markdown…**. Both disable while busy and when there is nothing to export. The folder contains images, README.md, offline index.html, and sanitized project.json.
 
-Provider schema: https://help.aliyun.com/en/model-studio/fun-asr-flash-recorded-speech-recognition-http-api (sentence/word timestamps and finalized SSE events). Model and request/upload behavior are unchanged.
+Provider schema: https://help.aliyun.com/en/model-studio/fun-asr-flash-recorded-speech-recognition-http-api (sentence/word timestamps and finalized SSE events). See [Qwen ASR configuration](QWEN-ASR.md) for the v0.3.0 JSON/SSE timeline and completion contract.
 
 Verification covers multi-image interleaving in HTML/Markdown/JSON, chunk offsets, millisecond boundaries, equal-time images, Unicode/punctuation, missing/invalid timestamps, manual edits, old project decoding, and both visible buttons in compact/light/dark AppKit rendering.
 

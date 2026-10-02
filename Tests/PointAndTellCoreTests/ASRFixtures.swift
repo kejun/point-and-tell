@@ -4,7 +4,7 @@ import Foundation
 enum ASRFixtures {
     static let tinyWAV = Data(base64Encoded: "UklGRiYAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQIAAAAAAA==")!
     static let request = #"{"model":"qwen-audio-3.0-asr-flash","input":{"messages":[{"role":"user","content":[{"type":"input_audio","input_audio":{"data":"data:audio/wav;base64,UklGRiYAAABXQVZFZm10IBAAAAABAAEAgD4AAAB9AAACABAAZGF0YQIAAAAAAA=="}}]}]},"parameters":{"format":"wav","sample_rate":"16000"}}"#
-    static let json = #"{"output":{"sentence":{"begin_time":760,"end_time":3800,"sentence_end":true,"sentence_id":1,"channel_id":0,"text":"Hello world."},"text":"Hello world."},"usage":{"duration":4},"request_id":"11111111-1111-4111-8111-111111111111"}"#
+    static let json = #"{"output":{"sentence":{"begin_time":760,"end_time":3800,"sentence_end":true,"sentence_id":1,"channel_id":0,"text":"Hello world.","words":[{"text":"Hello","begin_time":760,"end_time":1400,"fixed":true},{"text":"world","punctuation":".","begin_time":1500,"end_time":3800,"fixed":true}]},"text":"Hello world."},"usage":{"duration":4},"request_id":"11111111-1111-4111-8111-111111111111"}"#
     static let nestedJSON = #"{"output":{"output":{"sentence":{"begin_time":100,"end_time":900,"sentence_end":true,"sentence_id":1,"text":"Nested."}}},"request_id":"22222222-2222-4222-8222-222222222222"}"#
     static let missingTimingJSON = #"{"output":{"sentence":{"sentence_end":true,"sentence_id":1,"text":"No timing supplied."}},"request_id":"33333333-3333-4333-8333-333333333333"}"#
     static let partialTimingJSON = #"{"output":{"sentence":{"begin_time":200,"sentence_end":true,"text":"Only a start."}}}"#
@@ -18,11 +18,11 @@ enum ASRFixtures {
 
     id:2
     event:result
-    data:{"output":{"sentence":{"sentence_id":1,"sentence_end":true,"begin_time":100,"end_time":900,"text":"First."}},"request_id":"44444444-4444-4444-8444-444444444444"}
+    data:{"output":{"sentence":{"sentence_id":1,"sentence_end":true,"begin_time":100,"end_time":900,"text":"First.","words":[{"text":"First","punctuation":".","begin_time":100,"end_time":900,"fixed":true}]}},"request_id":"44444444-4444-4444-8444-444444444444"}
 
     id:3
     event:result
-    data: {"output":{"output":{"sentence":{"sentence_id":2,"sentence_end":true,"begin_time":1100,"end_time":2100,"text":"第二句。"}}},"request_id":"44444444-4444-4444-8444-444444444444"}
+    data: {"output":{"output":{"sentence":{"sentence_id":2,"sentence_end":true,"begin_time":1100,"end_time":2100,"text":"第二句。","words":[{"text":"第二句","punctuation":"。","begin_time":1100,"end_time":2100,"fixed":true}]}}},"request_id":"44444444-4444-4444-8444-444444444444"}
 
     data:[DONE]
 

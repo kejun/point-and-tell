@@ -46,8 +46,10 @@ public enum ASRResponseParser {
         guard let output = envelope.output else { throw ASRError.malformedResponse }
         if let payloads = output.sentences ?? output.output?.sentences, !payloads.isEmpty {
             let sentences = try payloads.filter { $0.sentenceEnd != false }.map { try normalized($0) }
+                .filter { !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
             guard !sentences.isEmpty else { throw ASRError.noFinalSentences }
             if let fullText = output.text ?? output.output?.text,
+               !fullText.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty,
                fullText.filter({ !$0.isWhitespace }) != sentences.map(\.text).joined().filter({ !$0.isWhitespace }) {
                 return ASRResult(sentences: [ASRSentence(text: fullText)])
             }
@@ -90,6 +92,8 @@ public enum ASRResponseParser {
         var identityIndexes: [String: Int] = [:]
         var requestID: String?
         var sawPayload = false
+        var fullText: String?
+        var unfinished = Set<String>()
 
         func flush() throws {
             guard !dataLines.isEmpty else { return }
@@ -100,8 +104,16 @@ public enum ASRResponseParser {
             sawPayload = true
             requestID = ASRSafeDiagnostics.requestID(envelope.requestID, redactingSecrets: redactingSecrets) ?? requestID
             guard let output = envelope.output else { throw ASRError.malformedResponse }
+            if let text = output.text ?? output.output?.text, !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                fullText = text
+            }
             guard let payload = output.sentence ?? output.output?.sentence else { return }
-            guard payload.sentenceEnd == true else { return }
+            let identity = "\(payload.channelID ?? 0):\(payload.sentenceID.map(String.init) ?? "unidentified")"
+            guard payload.sentenceEnd == true else {
+                if !(payload.text ?? "").trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { unfinished.insert(identity) }
+                return
+            }
+            unfinished.remove(identity)
             let sentence = try normalized(payload)
             guard !sentence.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             if let identifier = sentence.sentenceID {
@@ -127,6 +139,11 @@ public enum ASRResponseParser {
         try flush() // Accept the provider's final event without a trailing blank line.
         guard sawPayload else { throw ASRError.malformedResponse }
         guard !sentences.isEmpty else { throw ASRError.noFinalSentences }
+        guard unfinished.isEmpty else { throw ASRError.incompleteTimestamps }
+        if let fullText = fullText,
+           fullText.filter({ !$0.isWhitespace }) != sentences.map(\.text).joined().filter({ !$0.isWhitespace }) {
+            throw ASRError.incompleteTimestamps
+        }
         return ASRResult(sentences: sentences, requestID: requestID)
     }
 

@@ -6,7 +6,9 @@ final class ASRResponseParserTests: XCTestCase {
         let result = try parse(ASRFixtures.json)
         XCTAssertEqual(result.requestID, "11111111-1111-4111-8111-111111111111")
         XCTAssertEqual(result.sentences, [ASRSentence(text: "Hello world.", beginTimeMilliseconds: 760,
-                                                     endTimeMilliseconds: 3800, sentenceID: 1, channelID: 0)])
+                                                     endTimeMilliseconds: 3800, sentenceID: 1, channelID: 0,
+                                                     words: [ASRWord(text: "Hello", beginTimeMilliseconds: 760, endTimeMilliseconds: 1400),
+                                                             ASRWord(text: "world.", beginTimeMilliseconds: 1500, endTimeMilliseconds: 3800)])])
         XCTAssertTrue(result.sentences[0].hasCompleteTiming)
     }
 
@@ -52,6 +54,21 @@ final class ASRResponseParserTests: XCTestCase {
     func testSSECRLFAndUnterminatedLastEvent() throws {
         let payload = "id:1\r\nevent:result\r\ndata: \(ASRFixtures.json)"
         XCTAssertEqual(try parse(payload).sentences.first?.text, "Hello world.")
+    }
+
+    func testSSEFullTextMustBeCoveredByAllFinalSentences() throws {
+        let finalText = "data:{\"output\":{\"text\":\"First. 第二句。\"}}\n\n"
+        let complete = ASRFixtures.sse.replacingOccurrences(of: "data:[DONE]", with: finalText)
+        XCTAssertEqual(try parse(complete).validatedSentences().count, 2)
+        let omittedSentence = "data: \(ASRFixtures.json)\n\ndata:{\"output\":{\"text\":\"Missing. Hello world.\"}}\n\n"
+        XCTAssertThrowsError(try parse(omittedSentence)) { XCTAssertEqual($0 as? ASRError, .incompleteTimestamps) }
+    }
+
+    func testSSEUnfinishedTailCannotCompleteAfterAnEarlierFinalSentence() throws {
+        let tail = #"data:{"output":{"sentence":{"sentence_id":2,"sentence_end":false,"text":"Unfinished"}}}"#
+        XCTAssertThrowsError(try parse("data: \(ASRFixtures.json)\n\n" + tail)) {
+            XCTAssertEqual($0 as? ASRError, .incompleteTimestamps)
+        }
     }
 
     func testSSEMultilineData() throws {

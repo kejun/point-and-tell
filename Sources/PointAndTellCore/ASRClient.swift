@@ -49,8 +49,12 @@ public enum ASRRequestBuilder {
         request.timeoutInterval = 180
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        request.setValue(audio.durationSeconds >= 60 ? "enable" : "disable", forHTTPHeaderField: "X-DashScope-SSE")
-        request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
+        // Qwen 3.0 publishes every final sentence's word timestamps in SSE for
+        // audio >= 60 seconds. Non-streaming output.sentence may only describe
+        // the last sentence, so disabling SSE loses the earlier timeline.
+        let streamedTimeline = audio.durationSeconds >= 60
+        request.setValue(streamedTimeline ? "enable" : "disable", forHTTPHeaderField: "X-DashScope-SSE")
+        request.setValue(streamedTimeline ? "text/event-stream, application/json" : "application/json", forHTTPHeaderField: "Accept")
         do { request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) }
         catch { throw ASRError.requestEncoding }
         return request
@@ -210,7 +214,7 @@ public final class ASRClient {
                     }
                     return Result {
                         try ASRResponseParser.parse(data: response.data, contentType: response.contentType,
-                                                    redactingSecrets: [apiKey]).sentences
+                                                    redactingSecrets: [apiKey]).validatedSentences()
                     }
                 }
                 operation.finish(parsed)
