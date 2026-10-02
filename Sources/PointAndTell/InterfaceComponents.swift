@@ -72,6 +72,22 @@ final class PrimaryButtonCell: NSButtonCell {
                           range: NSRange(location: 0, length: text.length))
         return super.drawTitle(text, withFrame: frame, in: controlView)
     }
+
+    override func drawImage(_ image: NSImage, withFrame frame: NSRect, in controlView: NSView) {
+        guard let context = NSGraphicsContext.current?.cgContext else { return }
+        // Let AppKit position/scale the symbol using its alignment metrics, then
+        // tint only that isolated drawing. Re-rasterizing a symbol at image.size
+        // loses those metrics and can squash circular icons.
+        context.saveGState()
+        context.beginTransparencyLayer(auxiliaryInfo: nil)
+        super.drawImage(image, withFrame: frame, in: controlView)
+        context.setBlendMode(.sourceIn)
+        context.setFillColor(NSColor.white.cgColor)
+        context.fill(controlView.bounds)
+        context.setBlendMode(.normal)
+        context.endTransparencyLayer()
+        context.restoreGState()
+    }
 }
 
 final class SurfaceView: NSView {
