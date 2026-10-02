@@ -100,8 +100,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
                 do {
                     func render(_ name: String, width: CGFloat, height: CGFloat, dark: Bool = false) throws {
-                        self.window.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                        NSApp.appearance = NSAppearance(named: dark ? .darkAqua : .aqua)
+                        self.window.appearance = NSApp.appearance
                         self.window.setContentSize(NSSize(width: width, height: height))
+                        self.window.displayIfNeeded()
                         guard let view = self.window.contentView else { throw ProjectError.projectAlreadyExists }
                         view.layoutSubtreeIfNeeded()
                         guard self.preview.bounds.height <= 280, !self.window.contentView!.hasAmbiguousLayout else { exit(5) }
@@ -164,7 +166,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         result.bezelStyle = .rounded; result.font = .systemFont(ofSize: 12)
         if idleOnly { idleButtons.append(result) }; return result
     }
-    private func row(_ views: [NSView]) -> NSStackView { let r = NSStackView(views: views); r.orientation = .horizontal; r.spacing = 8; r.alignment = .centerY; return r }
+    private func row(_ views: [NSView]) -> NSStackView { let r = NSStackView(views: views); r.orientation = .horizontal; r.distribution = .fill; r.spacing = 8; r.alignment = .centerY; return r }
     private func label(_ text: String) -> NSTextField { NSTextField(labelWithString: text) }
     private func makeMenu() {
         let menu = NSMenu(); let root = NSMenuItem(); menu.addItem(root)
@@ -190,7 +192,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         window.titlebarAppearsTransparent = true
         window.setFrameAutosaveName("PointAndTell.Workspace.v2")
         let root = WindowBackgroundView(); window.contentView = root
-        let sidebar = NSVisualEffectView(); sidebar.material = .sidebar; sidebar.blendingMode = .behindWindow
+        let sidebar = SurfaceView(); sidebar.radius = 0; sidebar.fill = .controlBackgroundColor
         sidebar.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(sidebar)
         let main = NSView(); main.translatesAutoresizingMaskIntoConstraints = false; root.addSubview(main)
         NSLayoutConstraint.activate([
@@ -305,7 +307,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         savedLabel.font = .systemFont(ofSize: 10); savedLabel.textColor = .secondaryLabelColor
         let title = row([cardInfo, InterfaceStyle.spacer(), savedLabel])
         transcriptEditor.delegate = self; transcriptEditor.isRichText = false; transcriptEditor.allowsUndo = true
-        transcriptEditor.minSize = NSSize(width: 0, height: 108)
+        transcriptEditor.minSize = NSSize(width: 0, height: 100)
         transcriptEditor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         transcriptEditor.isHorizontallyResizable = false; transcriptEditor.autoresizingMask = .width
         transcriptEditor.textContainer?.widthTracksTextView = true
@@ -314,7 +316,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         transcriptEditor.textContainerInset = NSSize(width: 10, height: 10)
         transcriptEditor.setAccessibilityLabel("讲解文字，自动保存")
         let textScroll = NSScrollView(); textScroll.documentView = transcriptEditor; textScroll.hasVerticalScroller = true
-        textScroll.borderType = .bezelBorder; textScroll.heightAnchor.constraint(equalToConstant: 120).isActive = true
+        textScroll.borderType = .bezelBorder; textScroll.heightAnchor.constraint(equalToConstant: 104).isActive = true
         startField.placeholderString = "起始"; endField.placeholderString = "结束"
         startField.setAccessibilityLabel("起始时间，秒"); endField.setAccessibilityLabel("结束时间，秒")
         startField.widthAnchor.constraint(equalToConstant: 76).isActive = true
@@ -332,7 +334,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         preview.setAccessibilityLabel("截图预览")
         let previewSurface = SurfaceView(); previewSurface.fill = .underPageBackgroundColor; previewSurface.radius = 8
         InterfaceStyle.pin(preview, to: previewSurface, inset: 8)
-        previewSurface.heightAnchor.constraint(equalToConstant: 196).isActive = true
+        previewSurface.heightAnchor.constraint(equalToConstant: 176).isActive = true
         previewEmpty.font = .systemFont(ofSize: 12); previewEmpty.textColor = .secondaryLabelColor
         previewEmpty.alignment = .center; previewEmpty.translatesAutoresizingMaskIntoConstraints = false; previewSurface.addSubview(previewEmpty)
         NSLayoutConstraint.activate([previewEmpty.centerXAnchor.constraint(equalTo: previewSurface.centerXAnchor), previewEmpty.centerYAnchor.constraint(equalTo: previewSurface.centerYAnchor)])
@@ -345,7 +347,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         let extract = button("提取", #selector(extractManualFrame), idleOnly: true); extract.controlSize = .small
         let extraction = row([caption("取图 / 秒"), frameTimeField, extract, InterfaceStyle.spacer(), clear])
         return InterfaceStyle.column([title, textScroll, timing, InterfaceStyle.separator(),
-            sectionHeading("画面与标注", symbol: "photo"), previewSurface, attachmentLabel, images, extraction], spacing: 12)
+            sectionHeading("画面与标注", symbol: "photo"), previewSurface, attachmentLabel, images, extraction], spacing: 9)
     }
 
     private func makeEmptyState(in parent: NSView) {
@@ -356,7 +358,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         decorate(emptyAction, symbol: "record.circle", primary: true)
         emptySecondary = button("打开已有项目…", #selector(openProject), idleOnly: true)
         let hero = InterfaceStyle.symbol("rectangle.on.rectangle", size: 52)
-        let symbolRow = row([InterfaceStyle.spacer(), hero, InterfaceStyle.spacer()])
+        let leadingSpace = InterfaceStyle.spacer(), trailingSpace = InterfaceStyle.spacer()
+        let symbolRow = row([leadingSpace, hero, trailingSpace])
+        leadingSpace.widthAnchor.constraint(equalTo: trailingSpace.widthAnchor).isActive = true
         let stack = InterfaceStyle.column([symbolRow, emptyTitle, emptyDescription, emptyAction, emptySecondary], spacing: 18)
         stack.translatesAutoresizingMaskIntoConstraints = false; emptyContainer.addSubview(stack)
         NSLayoutConstraint.activate([stack.centerXAnchor.constraint(equalTo: emptyContainer.centerXAnchor), stack.centerYAnchor.constraint(equalTo: emptyContainer.centerYAnchor), stack.widthAnchor.constraint(equalToConstant: 350)])
@@ -380,8 +384,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     }
     private func decorate(_ button: NSButton, symbol: String, primary: Bool = false) {
         button.bezelStyle = .rounded; button.imagePosition = .imageLeading
+        if button.controlSize != .small { button.controlSize = .large }
         button.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-        button.font = .systemFont(ofSize: 12, weight: primary ? .semibold : .regular)
+        button.font = .systemFont(ofSize: primary ? 13 : 12, weight: primary ? .semibold : .regular)
         if primary { button.bezelColor = NSColor(calibratedRed: 0.06, green: 0.36, blue: 0.31, alpha: 1); button.contentTintColor = .white }
         button.setAccessibilityLabel(button.title)
     }

@@ -22,6 +22,7 @@ enum InterfaceStyle {
     static func symbol(_ name: String, size: CGFloat = 16) -> NSImageView {
         let view = NSImageView(image: NSImage(systemSymbolName: name, accessibilityDescription: nil) ?? NSImage())
         view.contentTintColor = accent
+        view.imageScaling = .scaleProportionallyUpOrDown
         view.translatesAutoresizingMaskIntoConstraints = false
         NSLayoutConstraint.activate([view.widthAnchor.constraint(equalToConstant: size), view.heightAnchor.constraint(equalToConstant: size)])
         return view
