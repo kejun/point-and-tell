@@ -26,9 +26,12 @@ final class UpdateController: NSObject, SPUUpdaterDelegate, SPUStandardUserDrive
     }
 
     func addMenuItems(to menu: NSMenu) {
-        let check = menu.addItem(withTitle: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
+        menu.insertItem(.separator(), at: 2)
+        let check = NSMenuItem(title: "检查更新…", action: #selector(checkForUpdates), keyEquivalent: "")
+        menu.insertItem(check, at: 3)
         check.target = self; checkItem = check
-        let automatic = menu.addItem(withTitle: "自动检查更新", action: #selector(toggleAutomaticChecks), keyEquivalent: "")
+        let automatic = NSMenuItem(title: "自动检查更新", action: #selector(toggleAutomaticChecks), keyEquivalent: "")
+        menu.insertItem(automatic, at: 4)
         automatic.target = self
     }
 

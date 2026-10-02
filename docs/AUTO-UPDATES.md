@@ -84,7 +84,9 @@ gh workflow run release.yml --repo kejun/point-and-tell --ref main
   最低系统与更新说明范围。
 - macOS 原生编译、已有音频/UI/HTML 冒烟；临时密钥签真实 .app ZIP 和 appcast，
   用独立 CryptoKit 验证包签名，并确认被修改的包与清单被拒绝。
-- 临时测试不访问生产更新源、不操作用户钥匙串、不实际替换安装中的应用。
+- 额外用独立测试 .app、临时密钥与本机 feed 实际完成 build 1 → 2 替换和重启。
+  临时测试不访问生产更新源、不操作用户钥匙串、不替换真实 Point & Tell。
+  测试包为本机 HTTP 设置的例外不进入正式应用。
 
 发布前在隔离 Mac/测试账号上，用两个签名一致且构建号递增的真实安装包验证：
 

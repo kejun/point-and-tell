@@ -28,6 +28,7 @@ else
 fi
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns "$APP/Contents/Resources/AppIcon.icns"
+cp Resources/Sparkle-LICENSE "$APP/Contents/Resources/Sparkle-LICENSE"
 FRAMEWORK="$(python3 scripts/sparkle-path.py --framework)"
 ditto "$FRAMEWORK" "$APP/Contents/Frameworks/Sparkle.framework"
 python3 - <<'PYKEY'

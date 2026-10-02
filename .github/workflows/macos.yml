@@ -53,6 +53,9 @@ jobs:
         run: ARCH=universal scripts/build-app.sh
       - name: Verify Sparkle signatures and generated feed
         run: scripts/test-update-tools.sh
+      - name: Verify isolated update replacement and relaunch
+        timeout-minutes: 4
+        run: scripts/test-update-install.sh
       - name: Verify native AAC audio chain
         timeout-minutes: 4
         run: '"dist/Point & Tell.app/Contents/MacOS/PointAndTell" --audio-smoke-test "$PWD/dist/audio-smoke"'
