@@ -19,4 +19,10 @@ Core regression tests cover a generic AVFoundation error with a nested OSStatus 
 
 These checks are not a real recording on the affected Mac. Install the new build, make a short disposable recording, verify the microphone meter, stop, and listen locally. Recording completion may start the already-consented automatic ASR upload. If startup still fails, copy the diagnostic text; the new stage/domain/code identifies the next investigation without requiring a private recording or API key.
 
+Native UI fixture evidence (the error codes below are synthetic test data, not recovered from the user's screenshot):
+
+![Failed start and retry action](screenshots/recording-start-failed.png)
+
+![Selectable nested diagnostic codes](screenshots/recording-error-dialog.png)
+
 References: [Apple setOutputSettings](https://developer.apple.com/documentation/avfoundation/avcapturemoviefileoutput/setoutputsettings(_:for:)), [Apple screen scaleFactor](https://developer.apple.com/documentation/avfoundation/avcapturescreeninput/scalefactor).

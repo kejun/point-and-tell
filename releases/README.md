@@ -1,5 +1,17 @@
 # Download Point & Tell
 
+## v0.3.2 · Recording startup compatibility and diagnostics · Universal · macOS 11.0+
+
+[Download v0.3.2](v0.3.2/Point-and-Tell-v0.3.2-macOS-universal.zip?raw=true)
+
+Recording now uses the macOS session preset to negotiate video/audio encoding, while retaining source scaling, 5/10 fps and the chosen microphone. Startup errors retain their original stage and nested system codes, with a Chinese dialog, Copy Diagnostics and a unique local report. Failed zero-duration recordings show a retry action and do not start transcription. v0.3.1 card grouping, pen input and instant screenshot assignment remain included.
+
+- Intel x86_64 + Apple Silicon arm64; minimum macOS 11.0
+- [Exact source commit](https://github.com/kejun/point-and-tell/commit/7de4ee55e6c03ff098e17a7a6a1cd52e3150c0c2) · [native build/test run](https://github.com/kejun/point-and-tell/actions/runs/37020370751)
+- 141 core tests per architecture, native AAC/WAV chain, failed-start/dialog UI, card/pen/HUD checks and WebKit export verification
+- [SHA-256](v0.3.2/Point-and-Tell-v0.3.2-macOS-universal.zip.sha256) · [build manifest](v0.3.2/build.json) · [diagnosis and limits](../docs/RECORDING-STARTUP.md)
+- Ad-hoc signed, not Apple-notarized. The original screenshot lacks an error code; the affected Mac's startup failure has not been reproduced. Physical screen/microphone capture, macOS 11 permissions and paid ASR still require device verification.
+
 ## v0.3.1 · Matching review cards and reliable pen input · Universal · macOS 11.0+
 
 [Download v0.3.1](v0.3.1/Point-and-Tell-v0.3.1-macOS-universal.zip?raw=true)
