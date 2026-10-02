@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.3.2 — 2026-10-02
+
+- Let the native capture preset negotiate compatible video/audio encoding instead of forcing a hardware preference, output dimensions, frame compression settings, and 44.1 kHz mono AAC. Keep source screen scaling, 5/10 fps, the selected microphone, and later ASR resampling.
+- Preserve synchronous session-start runtime errors before serial-queue cleanup; retain the original failure stage through finalization.
+- Show a Chinese recording-error title with selectable nested NSError domains/codes, Copy Diagnostics, and a unique local diagnostic file. No raw userInfo is included.
+- Show a retry action after a zero-duration failed recording and disable playback/transcription until a recording is available. Preserve partial files and do not start automatic ASR after failure.
+- Add nested-error/latch regression tests and native failure-dialog/empty-state checks.
+
+The screenshot's generic message alone does not establish the device-side root cause. This release addresses format-compatibility risks and confirmed diagnostic gaps. Physical recording on the affected Mac still needs verification; offline audio fixtures do not exercise a physical microphone or screen capture permission.
+
 ## 0.2.0 — Native workspace and app identity
 
 - Ship the selected forest-teal card icon in the application bundle; retain the 1024px master and Xcode icon set under Resources/Brand.
