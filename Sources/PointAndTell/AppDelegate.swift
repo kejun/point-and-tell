@@ -187,7 +187,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private func setBusy(_ value: Bool, status: String? = nil) { busy = value; transcriptEditor.isEditable = !value; startField.isEnabled = !value; endField.isEnabled = !value; framePicker.isEnabled = !value; frameTimeField.isEnabled = !value; apiKeyField.isEnabled = !value; idleButtons.forEach { $0.isEnabled = !value && !recorder.isRecording }; screenPicker.isEnabled = !value; fpsPicker.isEnabled = !value; microphonePicker.isEnabled = !value; if let status = status { statusLabel.stringValue = status } }
     private func persist() throws { if let project = project, let store = store { try store.save(project) } }
     private func fail(_ error: Error) { let alert = NSAlert(error: error); alert.runModal() }
-    private func report(_ text: String) { statusLabel.stringValue = text }
+    private func report(_ text: String) { statusLabel.stringValue = text; statusLabel.toolTip = text }
     private func refresh() { table.reloadData(); refreshFramePicker(); if table.selectedRow >= 0 { loadCard() } }
     private var cardIndex: Int? { guard let count = project?.reviewCards.count, table.selectedRow >= 0, table.selectedRow < count else { return nil }; return table.selectedRow }
 
@@ -359,7 +359,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                 if duration.isFinite && duration > 0 { project?.recording?.durationSeconds = duration; try persist() }
             }
             if let failed = project?.asrChunks.first(where: { $0.state == .failed }) {
-                report("已打开项目。上次转写失败：" + (failed.diagnostic?.safeSummary ?? failed.errorMessage ?? "请重试失败片段"))
+                let details = [failed.errorMessage, failed.diagnostic?.safeSummary].compactMap { $0 }.joined(separator: "\n")
+                report("已打开项目。上次转写失败：" + (details.isEmpty ? "请重试失败片段" : details))
             } else {
                 report("已打开 \(project?.title ?? "项目")。原始录制与失败片段已保留。")
             }
