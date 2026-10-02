@@ -117,14 +117,17 @@ public struct ASRChunk: Codable, Equatable, Identifiable, Sendable {
     public var state: ASRChunkState
     public var sentences: [TranscriptSegment]
     public var errorMessage: String?
+    public var diagnostic: ASRDiagnostic?
 
     public init(id: UUID = UUID(), index: Int = 0, relativePath: String, startSeconds: Double,
                 durationSeconds: Double, state: ASRChunkState = .pending,
-                sentences: [TranscriptSegment] = [], errorMessage: String? = nil) {
+                sentences: [TranscriptSegment] = [], errorMessage: String? = nil,
+                diagnostic: ASRDiagnostic? = nil) {
         self.id = id; self.index = index; self.relativePath = relativePath
         self.startSeconds = startSeconds; self.durationSeconds = durationSeconds
         self.state = state; self.sentences = sentences
         self.errorMessage = Self.sanitizedError(errorMessage)
+        self.diagnostic = diagnostic?.sanitized
     }
 
     /// Persist a short diagnostic, never raw response bodies, keys, URLs or local paths.
@@ -215,6 +218,7 @@ public final class ProjectStore {
         sanitized.asrChunks = project.asrChunks.map { chunk in
             var copy = chunk
             copy.errorMessage = ASRChunk.sanitizedError(copy.errorMessage)
+            copy.diagnostic = copy.diagnostic?.sanitized
             return copy
         }
         try fileManager.createDirectory(at: folderURL, withIntermediateDirectories: true)
@@ -235,6 +239,7 @@ public final class ProjectStore {
         let original = project
         for index in project.asrChunks.indices {
             project.asrChunks[index].errorMessage = ASRChunk.sanitizedError(project.asrChunks[index].errorMessage)
+            project.asrChunks[index].diagnostic = project.asrChunks[index].diagnostic?.sanitized
         }
         if recoverInterruptedWork {
             if [.recording, .paused, .finishing, .processing].contains(project.captureState) {
@@ -243,6 +248,7 @@ public final class ProjectStore {
             for index in project.asrChunks.indices where project.asrChunks[index].state == .transcribing {
                 project.asrChunks[index].state = .pending
                 project.asrChunks[index].errorMessage = nil
+                project.asrChunks[index].diagnostic = nil
             }
         }
         if project != original { try save(project) }

@@ -1,12 +1,21 @@
 #if os(macOS)
 import AppKit
 import AVFoundation
+import AVKit
 import PointAndTellCore
 
 final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate, NSTextViewDelegate {
     private var window: NSWindow!
     private var toolbar: NSPanel!
     private let screenPicker = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let microphonePicker = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let microphoneLevel = NSLevelIndicator(frame: .zero)
+    private let microphoneLabel = NSTextField(labelWithString: "麦克风待机")
+    private var microphoneChoices: [RecordingEngine.MicrophoneChoice] = []
+    private var playbackWindow: NSWindow?
+    private var playbackPlayer: AVPlayer?
+    private var silenceUploadApproved = false
+    private var captureStateBeforeASR: CaptureState?
     private let fpsPicker = NSPopUpButton(frame: .zero, pullsDown: false)
     private let statusLabel = NSTextField(wrappingLabelWithString: "新建录制，边说边指。停止后可转写、校对并导出离线 HTML。")
     private let timerLabel = NSTextField(labelWithString: "00:00")
@@ -89,7 +98,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     }
     func applicationWillTerminate(_ notification: Notification) { if let key = hotKey { UnregisterEventHotKey(key) }; if let handler = eventHandler { RemoveEventHandler(handler) } }
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { !recorder.isRecording && !busy }
-    func windowShouldClose(_ sender: NSWindow) -> Bool { !busy && !recorder.isRecording }
+    func windowShouldClose(_ sender: NSWindow) -> Bool {
+        if sender === playbackWindow { closePlayback(); return true }
+        return !busy && !recorder.isBusy
+    }
 
     private func button(_ title: String, _ action: Selector, idleOnly: Bool = false) -> NSButton {
         let result = NSButton(title: title, target: self, action: action)
@@ -110,16 +122,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         editItem.submenu = edit; NSApp.mainMenu = menu
     }
     private func makeWindow() {
-        window = NSWindow(contentRect: NSRect(x: 120, y: 120, width: 1060, height: 740), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
+        window = NSWindow(contentRect: NSRect(x: 120, y: 120, width: 1060, height: 760), styleMask: [.titled, .closable, .miniaturizable, .resizable], backing: .buffered, defer: false)
         window.title = "Point & Tell · 指指点点"; window.delegate = self; window.minSize = NSSize(width: 860, height: 650)
-        let content = NSStackView(); content.orientation = .vertical; content.alignment = .leading; content.spacing = 12
+        let content = NSStackView(); content.orientation = .vertical; content.alignment = .leading; content.spacing = 8
         content.edgeInsets = NSEdgeInsets(top: 18, left: 18, bottom: 18, right: 18)
         screens = NSScreen.screens
         for (index, screen) in screens.enumerated() { screenPicker.addItem(withTitle: "屏幕 \(index + 1) · \(screen.localizedName)") }
         fpsPicker.addItems(withTitles: ["5 fps · 省资源", "10 fps"])
         startButton = button("新建并开始录制", #selector(startRecording), idleOnly: true)
         content.addArrangedSubview(row([screenPicker, fpsPicker, startButton, button("打开项目…", #selector(openProject), idleOnly: true), button("显示项目文件", #selector(revealProject))]))
-        statusLabel.maximumNumberOfLines = 3; statusLabel.font = .systemFont(ofSize: 12); content.addArrangedSubview(statusLabel)
+        microphonePicker.widthAnchor.constraint(equalToConstant: 340).isActive = true
+        refreshMicrophones()
+        content.addArrangedSubview(row([label("麦克风"), microphonePicker,
+            button("刷新设备", #selector(refreshMicrophones), idleOnly: true),
+            button("本地试听录屏", #selector(playRecording), idleOnly: true)]))
+        statusLabel.maximumNumberOfLines = 2; statusLabel.font = .systemFont(ofSize: 12); content.addArrangedSubview(statusLabel)
         apiKeyField.placeholderString = "阿里云 API Key，仅本次内存保存"; apiKeyField.widthAnchor.constraint(equalToConstant: 295).isActive = true
         cancelASRButton = button("取消转写", #selector(cancelASR)); cancelASRButton.isEnabled = false
         content.addArrangedSubview(row([apiKeyField, button("转写 / 重试失败片段", #selector(transcribe), idleOnly: true), cancelASRButton]))
@@ -155,21 +172,28 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         window.center()
     }
     private func makeToolbar() {
-        toolbar = NSPanel(contentRect: NSRect(x: 60, y: 60, width: 420, height: 50), styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
+        toolbar = NSPanel(contentRect: NSRect(x: 60, y: 60, width: 730, height: 50), styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
         toolbar.title = "Point & Tell · 录制中"; toolbar.level = .floating; toolbar.isFloatingPanel = true; toolbar.hidesOnDeactivate = false; toolbar.isReleasedWhenClosed = false
         stopButton = button("停止", #selector(stopRecording))
-        let controls = row([timerLabel, button("标记 ⌃⌥M", #selector(mark)), button("画笔", #selector(pen)), stopButton]); controls.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12); toolbar.contentView = controls
+        microphoneLevel.levelIndicatorStyle = .continuousCapacity
+        microphoneLevel.minValue = -60; microphoneLevel.maxValue = 0; microphoneLevel.doubleValue = -60
+        microphoneLevel.widthAnchor.constraint(equalToConstant: 100).isActive = true
+        microphoneLevel.toolTip = "麦克风平均电平，−60 至 0 dBFS；有电平不等于一定是人声"
+        microphoneLabel.widthAnchor.constraint(equalToConstant: 215).isActive = true
+        microphoneLabel.lineBreakMode = .byTruncatingMiddle
+        let controls = row([timerLabel, microphoneLabel, microphoneLevel, button("标记 ⌃⌥M", #selector(mark)), button("画笔", #selector(pen)), stopButton]); controls.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12); toolbar.contentView = controls
     }
-    @objc private func about() { let a = NSAlert(); a.messageText = "Point & Tell 0.1.0"; a.informativeText = "适用于 macOS 11+ 的轻量屏幕讲解工具。\n录屏和标注本地保存；转写按需上传音频。\n这是早期版本，真实阿里云接口与旧款 Mac 性能需要设备验证。"; a.runModal() }
-    private func setBusy(_ value: Bool, status: String? = nil) { busy = value; transcriptEditor.isEditable = !value; startField.isEnabled = !value; endField.isEnabled = !value; framePicker.isEnabled = !value; frameTimeField.isEnabled = !value; apiKeyField.isEnabled = !value; idleButtons.forEach { $0.isEnabled = !value && !recorder.isRecording }; screenPicker.isEnabled = !value; fpsPicker.isEnabled = !value; if let status = status { statusLabel.stringValue = status } }
+    @objc private func about() { let a = NSAlert(); a.messageText = "Point & Tell 0.1.1"; a.informativeText = "适用于 macOS 11+ 的轻量屏幕讲解工具。\n录屏和标注本地保存；转写按需上传音频。\n这是早期版本，真实阿里云接口与旧款 Mac 性能需要设备验证。"; a.runModal() }
+    private func setBusy(_ value: Bool, status: String? = nil) { busy = value; transcriptEditor.isEditable = !value; startField.isEnabled = !value; endField.isEnabled = !value; framePicker.isEnabled = !value; frameTimeField.isEnabled = !value; apiKeyField.isEnabled = !value; idleButtons.forEach { $0.isEnabled = !value && !recorder.isRecording }; screenPicker.isEnabled = !value; fpsPicker.isEnabled = !value; microphonePicker.isEnabled = !value; if let status = status { statusLabel.stringValue = status } }
     private func persist() throws { if let project = project, let store = store { try store.save(project) } }
     private func fail(_ error: Error) { let alert = NSAlert(error: error); alert.runModal() }
-    private func report(_ text: String) { statusLabel.stringValue = text }
+    private func report(_ text: String) { statusLabel.stringValue = text; statusLabel.toolTip = text }
     private func refresh() { table.reloadData(); refreshFramePicker(); if table.selectedRow >= 0 { loadCard() } }
     private var cardIndex: Int? { guard let count = project?.reviewCards.count, table.selectedRow >= 0, table.selectedRow < count else { return nil }; return table.selectedRow }
 
     @objc private func startRecording() {
         guard !busy, !recorder.isRecording else { return }
+        closePlayback()
         let panel = NSSavePanel(); panel.title = "保存新的本地录制项目"; panel.nameFieldStringValue = "Point-and-Tell-\(Int(Date().timeIntervalSince1970)).pointtell"; panel.canCreateDirectories = true
         guard panel.runModal() == .OK, let folder = panel.url else { return }
         do {
@@ -181,13 +205,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             let fps = fpsPicker.indexOfSelectedItem == 0 ? 5 : 10
             project?.recording = RecordingInfo(relativePath: "recording.mov", durationSeconds: 0, displayID: selectedDisplay, fps: fps)
             project?.captureState = .recording; try persist(); setBusy(true, status: "正在请求录屏与麦克风权限…")
-            recorder.start(displayID: selectedDisplay, fps: fps, outputURL: folder.appendingPathComponent("recording.mov")) { [weak self] result in
+            recorder.start(displayID: selectedDisplay, fps: fps, microphoneID: microphonePicker.selectedItem?.representedObject as? String, outputURL: folder.appendingPathComponent("recording.mov")) { [weak self] result in
                 guard let self = self else { return }
                 switch result {
                 case .success:
                     self.window.orderOut(nil); self.toolbar.orderFrontRegardless(); self.stopButton.isEnabled = true
-                    self.timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
-                        guard let self = self else { return }; let seconds = Int(self.recorder.elapsedSeconds); self.timerLabel.stringValue = String(format: "%02d:%02d", seconds / 60, seconds % 60)
+                    self.updateMicrophoneMeter()
+                    self.timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
+                        guard let self = self else { return }; let seconds = Int(self.recorder.elapsedSeconds); self.timerLabel.stringValue = String(format: "%02d:%02d", seconds / 60, seconds % 60); self.updateMicrophoneMeter()
                     }
                 case .failure(let error): self.recordingFailed(error)
                 }
@@ -204,15 +229,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             guard let self = self else { return }; self.toolbar.orderOut(nil); self.window.makeKeyAndOrderFront(nil)
             switch result {
             case .success(let movie):
-                let duration = AVURLAsset(url: movie).duration.seconds
-                if duration.isFinite { self.project?.recording?.durationSeconds = duration }
-                self.project?.captureState = .complete
-                if self.project?.reviewCards.isEmpty == true {
-                    let placeholders = self.project?.anchors.map { ReviewCard(text: "", frameIDs: [$0.id], startSeconds: $0.timestamp, endSeconds: $0.timestamp) } ?? []
-                    self.project?.reviewCards = placeholders
+                self.setBusy(true, status: "录屏已保存，正在本地检查音轨和实际解码电平…")
+                DispatchQueue.global(qos: .utility).async {
+                    let inspection = Result { try AudioInspector.inspect(movieURL: movie) }
+                    let duration = AVURLAsset(url: movie).duration.seconds
+                    DispatchQueue.main.async {
+                        if duration.isFinite { self.project?.recording?.durationSeconds = duration }
+                        switch inspection {
+                        case .success(let report):
+                            self.project?.captureState = .complete
+                            if self.project?.reviewCards.isEmpty == true {
+                                let placeholders = self.project?.anchors.map { ReviewCard(text: "", frameIDs: [$0.id], startSeconds: $0.timestamp, endSeconds: $0.timestamp) } ?? []
+                                self.project?.reviewCards = placeholders
+                            }
+                            do { try self.persist() } catch { self.fail(error) }
+                            let message = report.suspectedSilence
+                                ? "录音检查：电平很低，可能是静音。请先本地试听，再检查所选麦克风和系统输入音量。"
+                                : "录音检查通过：存在可解码音频。请先本地试听，确认能听见讲话后再转写。"
+                            self.setBusy(false, status: message + " " + report.safeSummary); self.refresh()
+                        case .failure(let error):
+                            self.project?.captureState = .interrupted; try? self.persist()
+                            self.setBusy(false, status: "录音检查失败：没有可用音频，暂不能转写。录屏和截图仍保留。")
+                            self.fail(error); self.refresh()
+                        }
+                    }
                 }
-                do { try self.persist() } catch { self.fail(error) }
-                self.setBusy(false, status: "录制已保存在本地。输入 API Key 后可转写；也可直接添加文字并导出。"); self.refresh()
             case .failure(let error): self.recordingFailed(error)
             }
         }
@@ -222,6 +263,65 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         project?.recording?.durationSeconds = recorder.elapsedSeconds
         project?.captureState = .interrupted; try? persist(); setBusy(false, status: "录制中断。已写入的文件保留在项目文件夹，可尝试重新打开。"); fail(error)
     }
+    @objc private func refreshMicrophones() {
+        guard !busy, !recorder.isBusy else { return }
+        let selectedID = microphonePicker.selectedItem?.representedObject as? String
+        microphoneChoices = RecordingEngine.microphoneChoices()
+        microphonePicker.removeAllItems()
+        let defaultName = microphoneChoices.first(where: { $0.isSystemDefault })?.name ?? "无可用设备"
+        microphonePicker.addItem(withTitle: "系统默认 · " + defaultName)
+        for (index, choice) in microphoneChoices.enumerated() {
+            microphonePicker.addItem(withTitle: String(index + 1) + " · " + choice.name + (choice.isSystemDefault ? "（当前默认）" : ""))
+            microphonePicker.lastItem?.representedObject = choice.uniqueID
+        }
+        if let selectedID = selectedID {
+            if let item = microphonePicker.itemArray.first(where: { ($0.representedObject as? String) == selectedID }) {
+                microphonePicker.select(item)
+            } else {
+                microphonePicker.addItem(withTitle: "已断开 · 请重新选择麦克风")
+                microphonePicker.lastItem?.representedObject = selectedID
+                microphonePicker.selectItem(at: microphonePicker.numberOfItems - 1)
+            }
+        }
+        microphonePicker.toolTip = "默认设备会在录制开始时重新读取。选择具体设备后，断开时不会偷偷改用其他麦克风。"
+    }
+
+    private func updateMicrophoneMeter() {
+        let status = recorder.status
+        let power = status.microphoneAveragePowerDBFS.map(Double.init)
+        microphoneLevel.doubleValue = min(0, max(-60, power ?? -60))
+        let name = status.microphoneName ?? "无麦克风"
+        let detail: String
+        if !status.audioConnectionEnabled || !status.audioConnectionActive { detail = "音频连接未就绪" }
+        else if let power = power { detail = status.microphoneHealth == "noSignal" ? "电平很低，请说话检查" : String(format: "%.0f dBFS", power) }
+        else { detail = "等待电平" }
+        microphoneLabel.stringValue = name + " · " + detail
+        microphoneLabel.toolTip = microphoneLabel.stringValue + (status.microphonePeakPowerDBFS.map { String(format: " · peak %.0f dBFS", $0) } ?? "")
+    }
+
+    private func closePlayback() {
+        playbackPlayer?.pause()
+        (playbackWindow?.contentView as? AVPlayerView)?.player = nil
+        playbackPlayer = nil
+        playbackWindow?.orderOut(nil)
+    }
+
+    @objc private func playRecording() {
+        guard !busy, !recorder.isBusy, let store = store, let recording = project?.recording else { return }
+        do {
+            let movie = try store.resolveRelativePath(recording.relativePath, requireExisting: true)
+            playbackPlayer?.pause()
+            let player = AVPlayer(url: movie); player.volume = 1; player.isMuted = false
+            let view = AVPlayerView(frame: NSRect(x: 0, y: 0, width: 720, height: 440))
+            view.player = player; view.controlsStyle = .floating
+            let playerWindow = playbackWindow ?? NSWindow(contentRect: view.frame, styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+            playerWindow.title = "本地试听 · 请确认能听见讲话"; playerWindow.isReleasedWhenClosed = false
+            playerWindow.delegate = self; playerWindow.contentView = view; playerWindow.center()
+            playbackPlayer = player; playbackWindow = playerWindow; playerWindow.makeKeyAndOrderFront(nil)
+            player.play()
+        } catch { fail(error) }
+    }
+
     @objc private func mark() { captureAnchor(draw: false) }
     @objc private func pen() { captureAnchor(draw: true) }
     private func captureAnchor(draw: Bool) {
@@ -253,12 +353,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     @objc private func openProject() {
         guard !busy else { return }; let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.title = "选择 .pointtell 项目文件夹"
         guard panel.runModal() == .OK, let url = panel.url else { return }
-        do { let chosen = ProjectStore(folderURL: url); project = try chosen.load(); store = chosen
+        do { let chosen = ProjectStore(folderURL: url); let loaded = try chosen.load(); closePlayback(); project = loaded; store = chosen
             if let recording = project?.recording, let movie = try? chosen.resolveRelativePath(recording.relativePath, requireExisting: true) {
                 let duration = AVURLAsset(url: movie).duration.seconds
                 if duration.isFinite && duration > 0 { project?.recording?.durationSeconds = duration; try persist() }
             }
-            report("已打开 \(project?.title ?? "项目")。原始录制与失败片段已保留。"); refresh() } catch { fail(error) }
+            if let failed = project?.asrChunks.first(where: { $0.state == .failed }) {
+                let details = [failed.errorMessage, failed.diagnostic?.safeSummary].compactMap { $0 }.joined(separator: "\n")
+                report("已打开项目。上次转写失败：" + (details.isEmpty ? "请重试失败片段" : details))
+            } else {
+                report("已打开 \(project?.title ?? "项目")。原始录制与失败片段已保留。")
+            }
+            refresh() } catch { fail(error) }
     }
     @objc private func revealProject() { if let url = store?.folderURL { NSWorkspace.shared.activateFileViewerSelecting([url]) } }
 
@@ -266,31 +372,102 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         guard !busy, let store = store, let recording = project?.recording else { return }
         let key = apiKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else { report("请先输入本次转写使用的 API Key。密钥不会保存到项目、日志或导出文件。"); return }
-        let alert = NSAlert(); alert.messageText = "将本项目的音频发送给阿里云转写？"; alert.informativeText = "接收方：maas.qianwenaiapi.com\n发送内容：本项目麦克风录音，按约 3 分钟分片。视频和截图不会上传。服务商可能按用量计费。\n该接口尚未通过真实付费请求验证。"; alert.addButton(withTitle: "发送音频并转写"); alert.addButton(withTitle: "取消")
-        guard alert.runModal() == .alertFirstButtonReturn else { return }
-        cancelRequested = false; setBusy(true, status: "准备本地音频分片…"); cancelASRButton.isEnabled = true
-        if project?.asrChunks.isEmpty == false { processNextChunk(apiKey: key); return }
+        closePlayback(); cancelRequested = false; silenceUploadApproved = false
+        captureStateBeforeASR = project?.captureState
+        setBusy(true, status: "音频检查：正在本地检查录音，尚未上传…"); cancelASRButton.isEnabled = true
+        if project?.asrChunks.isEmpty == false {
+            // Saved WAVs are checked individually. A damaged source MOV must
+            // not discard a valid saved WAV retry.
+            confirmAndPrepareTranscription(apiKey: key, store: store, recording: recording, source: nil)
+            return
+        }
         do {
             let movie = try store.resolveRelativePath(recording.relativePath, requireExisting: true)
+            DispatchQueue.global(qos: .utility).async { [weak self] in
+                let result = Result { try AudioInspector.inspect(movieURL: movie) }
+                DispatchQueue.main.async {
+                    guard let self = self else { return }
+                    guard !self.cancelRequested else { self.finishASR(cancelled: true); return }
+                    switch result {
+                    case .success(let inspection): self.confirmAndPrepareTranscription(apiKey: key, store: store, recording: recording, source: inspection)
+                    case .failure(let error): self.stopForAudioError(error, stage: "录音检查")
+                    }
+                }
+            }
+        } catch { stopForAudioError(error, stage: "录音检查") }
+    }
+
+    private func confirmAndPrepareTranscription(apiKey: String, store: ProjectStore, recording: RecordingInfo, source: AudioInspectionReport?) {
+        let alert = NSAlert(); alert.messageText = "将本项目的音频发送给阿里云转写？"
+        let isQuiet = source?.suspectedSilence == true
+        alert.informativeText = (isQuiet ? "本地检查发现电平很低，可能是静音。此检查只测幅度，不能判断是否有人声；建议取消并先试听。\n\n" : "") + "接收方：maas.qianwenaiapi.com\n发送内容：本项目麦克风录音，按约 3 分钟分片。视频和截图不会上传。服务商可能按用量计费。\n该接口尚未通过真实付费请求验证。"
+        alert.addButton(withTitle: isQuiet ? "仍发送低电平音频并转写" : "发送音频并转写"); alert.addButton(withTitle: "取消")
+        guard alert.runModal() == .alertFirstButtonReturn else { finishASR(cancelled: true); return }
+        silenceUploadApproved = isQuiet
+        if project?.asrChunks.isEmpty == false { processNextChunk(apiKey: apiKey); return }
+        do {
+            let movie = try store.resolveRelativePath(recording.relativePath, requireExisting: true)
+            report("音频提取：将本地录音解码为 16 kHz WAV，尚未上传…")
             chunker.chunk(movieURL: movie, directory: store.folderURL.appendingPathComponent("audio")) { [weak self] result in
                 guard let self = self else { return }
                 do {
                     let chunks = try result.get()
                     self.project?.asrChunks = chunks.map { ASRChunk(index: $0.index, relativePath: "audio/" + $0.relativePath, startSeconds: $0.startSeconds, durationSeconds: $0.durationSeconds) }
-                    try self.persist(); if self.cancelRequested { self.finishASR(cancelled: true) } else { self.processNextChunk(apiKey: key) }
-                } catch { self.finishASR(cancelled: false); self.fail(error) }
+                    try self.persist(); if self.cancelRequested { self.finishASR(cancelled: true) } else { self.processNextChunk(apiKey: apiKey) }
+                } catch { self.stopForAudioError(error, stage: "音频提取") }
             }
-        } catch { finishASR(cancelled: false); fail(error) }
+        } catch { stopForAudioError(error, stage: "音频提取") }
     }
+
+    private func stopForAudioError(_ error: Error, stage: String) {
+        finishASR(cancelled: cancelRequested)
+        guard !cancelRequested else { return }
+        report(stage + "失败：" + (ASRChunk.sanitizedError(error.localizedDescription) ?? "音频无法处理") + "。原文件已保留，尚未发送此片段。")
+        fail(error)
+    }
+
     private func processNextChunk(apiKey: String) {
         guard !cancelRequested else { finishASR(cancelled: true); return }
         guard let index = project?.asrChunks.firstIndex(where: { $0.state == .pending || $0.state == .failed }), let store = store else { buildReviewFrames(); return }
         guard let chunk = project?.asrChunks[index] else { return }
-        activeChunkID = chunk.id; project?.asrChunks[index].state = .transcribing; project?.asrChunks[index].errorMessage = nil
+        report("WAV 检查：片段 \(chunk.index + 1)，正在确认实际上传文件可解码及电平…")
+        DispatchQueue.global(qos: .utility).async { [weak self] in
+            let result: Result<(AudioInspectionReport, Data), Error> = Result {
+                let url = try store.resolveRelativePath(chunk.relativePath, requireExisting: true)
+                let inspection = try AudioInspector.inspect(movieURL: url)
+                let wav = try Data(contentsOf: url, options: .mappedIfSafe)
+                try ASRWAVAudio(wav: wav).validateForRequest()
+                return (inspection, wav)
+            }
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+                guard !self.cancelRequested else { self.finishASR(cancelled: true); return }
+                do {
+                    let (inspection, wav) = try result.get()
+                    if inspection.suspectedSilence && !self.silenceUploadApproved {
+                        let alert = NSAlert(); alert.messageText = "片段 \(chunk.index + 1) 电平很低，仍要上传吗？"
+                        alert.informativeText = inspection.safeSummary + "\n这不是人声检测。安静的讲话也可能触发提示；建议先取消并本地试听。继续会允许本项目本次转写中的低电平片段上传，并可能产生费用。"
+                        alert.addButton(withTitle: "本次继续发送低电平片段"); alert.addButton(withTitle: "取消并试听")
+                        guard alert.runModal() == .alertFirstButtonReturn else { self.finishASR(cancelled: true); return }
+                        self.silenceUploadApproved = true
+                    }
+                    self.sendChunk(index: index, chunk: chunk, wav: wav, apiKey: apiKey)
+                } catch {
+                    self.project?.asrChunks[index].state = .failed
+                    self.project?.asrChunks[index].errorMessage = ASRChunk.sanitizedError("[WAV inspection] " + error.localizedDescription)
+                    self.project?.asrChunks[index].diagnostic = nil
+                    try? self.persist(); self.stopForAudioError(error, stage: "WAV 检查")
+                }
+            }
+        }
+    }
+
+    private func sendChunk(index: Int, chunk: ASRChunk, wav: Data, apiKey: String) {
+        activeChunkID = chunk.id; project?.asrChunks[index].state = .transcribing; project?.asrChunks[index].errorMessage = nil; project?.asrChunks[index].diagnostic = nil
         do {
-            try persist(); let wav = try Data(contentsOf: store.resolveRelativePath(chunk.relativePath, requireExisting: true), options: .mappedIfSafe)
+            try persist()
             let completed = project?.asrChunks.filter { $0.state == .complete }.count ?? 0
-            report("正在转写片段 \(chunk.index + 1) / \(project?.asrChunks.count ?? 0) · 已完成 \(completed)。等待服务商返回，没有估算进度。")
+            report("HTTP 转写：片段 \(chunk.index + 1) / \(project?.asrChunks.count ?? 0) · 已完成 \(completed)。等待服务商返回，没有估算进度。")
             asrTask = asr.transcribe(wav: wav, apiKey: apiKey) { [weak self] result in
                 guard let self = self else { return }; self.asrTask = nil; self.activeChunkID = nil
                 guard self.project?.asrChunks.indices.contains(index) == true else { return }
@@ -301,13 +478,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     }; self.project?.asrChunks[index].state = .complete
                 case .failure(let error):
                     self.project?.asrChunks[index].state = self.cancelRequested ? .pending : .failed
-                    self.project?.asrChunks[index].errorMessage = ASRChunk.sanitizedError(error.localizedDescription)
+                    let safe = ASRError.safeDescription(for: error)
+                    self.project?.asrChunks[index].errorMessage = safe
+                    self.project?.asrChunks[index].diagnostic = ASRDiagnostic(error: error)
                     try? self.persist(); self.finishASR(cancelled: self.cancelRequested)
-                    if !self.cancelRequested { self.fail(error) }; return
+                    if !self.cancelRequested { self.report(safe); self.fail(NSError(domain: "PointAndTell.ASR", code: 1, userInfo: [NSLocalizedDescriptionKey: safe])) }; return
                 }
                 do { try self.persist(); self.processNextChunk(apiKey: apiKey) } catch { self.finishASR(cancelled: false); self.fail(error) }
             }
-        } catch { project?.asrChunks[index].state = .failed; project?.asrChunks[index].errorMessage = ASRChunk.sanitizedError(error.localizedDescription); try? persist(); finishASR(cancelled: false); fail(error) }
+        } catch { project?.asrChunks[index].state = .failed; project?.asrChunks[index].diagnostic = nil; project?.asrChunks[index].errorMessage = ASRChunk.sanitizedError(error.localizedDescription); try? persist(); finishASR(cancelled: false); fail(error) }
     }
     @objc private func cancelASR() { cancelRequested = true; asrTask?.cancel(); if asrTask == nil { report("将在当前本地步骤结束后取消；已完成的音频片段保留。") } }
     private func finishASR(cancelled: Bool) {
@@ -316,7 +495,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         let existing = Set(project?.reviewCards.compactMap { $0.transcriptID } ?? [])
         let partialCards = FrameMatcher.suggestCards(for: completed.filter { !existing.contains($0.id) }, anchors: project?.anchors ?? [])
         project?.reviewCards.append(contentsOf: partialCards)
-        project?.captureState = .complete; try? persist(); cancelASRButton.isEnabled = false; setBusy(false, status: cancelled ? "转写已取消。已完成的片段保留，下次会继续未完成片段。" : "转写处理已停止。请检查片段状态；重试只发送未完成或失败的片段。"); refresh()
+        if project?.captureState == .processing { project?.captureState = captureStateBeforeASR ?? .complete }
+        try? persist(); cancelASRButton.isEnabled = false; setBusy(false, status: cancelled ? "转写已取消。已完成的片段保留，下次会继续未完成片段。" : "转写处理已停止。请检查片段状态；重试只发送未完成或失败的片段。"); refresh()
     }
     private func buildReviewFrames() {
         guard let store = store, let recording = project?.recording else { finishASR(cancelled: false); return }
@@ -354,7 +534,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                 let suggested = FrameMatcher.suggestCards(for: segments.filter { !existing.contains($0.id) }, anchors: self.project?.anchors ?? [])
                 self.project?.reviewCards.removeAll { $0.transcriptID == nil && $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 self.project?.reviewCards.append(contentsOf: suggested)
-                self.project?.captureState = .complete; do { try self.persist() } catch { self.fail(error) }
+                self.project?.captureState = self.captureStateBeforeASR ?? .complete; do { try self.persist() } catch { self.fail(error) }
                 self.cancelASRButton.isEnabled = false; self.setBusy(false, status: warning.map { "转写完成，但部分截图失败：\($0)。请手动取图后导出。" } ?? "转写与配图已准备好。请校对文字、时间和图片，再导出。无时间戳的句子需要手动配图。")
                 self.refresh(); if !(self.project?.reviewCards.isEmpty ?? true) { self.table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false) }
             }

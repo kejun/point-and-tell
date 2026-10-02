@@ -1,5 +1,20 @@
 # Changelog
 
+## 0.1.1 — 2026-10-02
+
+Audio-chain diagnostics and capture reliability update.
+
+- Explicit microphone selector (including system default and named built-in/external inputs), actual device name and bounded live dBFS meter
+- Require an enabled, active audio connection before reporting recording startup; preserve and surface interrupted/partial recording errors
+- Inspect the saved recording for a readable audio track and decoded PCM samples; no usable audio blocks transcription
+- Local in-app recording playback; low-level/silence warning with an explicit per-attempt override before audio upload
+- Recheck each actual WAV before upload, including retry files; amplitude is not treated as speech detection
+- Staged request, transport, HTTP/provider and response-parsing diagnostics with safe status/code/request ID; no raw provider message, key or response persistence
+- Native nonzero AAC-in-MOV fixtures at 44.1/48 kHz cover resampling, 180-second splitting, timeline offset, silence, absent tracks, corrupt input and non-destructive retry
+
+The user's original Big Sur no-audio failure has not been reproduced from a supplied recording. These changes address confirmed validation/diagnostic gaps; they do not establish a particular hardware or API-key root cause. Physical microphone capture on macOS 11.7.11 and paid provider integration remain device/user-verification steps.
+
+
 ## 0.1.0 — 2026-10-02
 
 Initial preview for macOS 11+ Intel and Apple Silicon Macs.

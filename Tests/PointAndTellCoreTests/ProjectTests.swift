@@ -129,4 +129,144 @@ final class ProjectTests: XCTestCase {
         project.anchors[0].endTimestamp = .infinity
         XCTAssertThrowsError(try store.save(project))
     }
+
+    func testStructuredASRDiagnosticsPreserveUUIDAndHexIDsAcrossSaveAndLoad() throws {
+        let store = ProjectStore(folderURL: root)
+        var project = try store.create(title: "Support details")
+        let identifiers = ["21da954f-704d-4931-8fe5-444d8e6fe33f", "21da954f704d49318fe5444d8e6fe33f"]
+        project.asrChunks = identifiers.enumerated().map { index, identifier in
+            let error = ASRError.httpStatus(401, code: "InvalidApiKey", requestID: identifier)
+            return ASRChunk(index: index, relativePath: "audio/\(index).wav", startSeconds: Double(index),
+                            durationSeconds: 1, state: .failed, errorMessage: error.localizedDescription,
+                            diagnostic: ASRDiagnostic(error: error))
+        }
+        try store.save(project)
+        let loaded = try store.load()
+        for (index, identifier) in identifiers.enumerated() {
+            let diagnostic = try XCTUnwrap(loaded.asrChunks[index].diagnostic)
+            XCTAssertEqual(diagnostic.stage, .http)
+            XCTAssertEqual(diagnostic.httpStatus, 401)
+            XCTAssertEqual(diagnostic.code, "InvalidApiKey")
+            XCTAssertEqual(diagnostic.requestID, identifier)
+            XCTAssertTrue(diagnostic.safeSummary.contains(identifier))
+            XCTAssertTrue(diagnostic.safeSummary.contains("HTTP 401"))
+            // The generic scrubber stays conservative; only structured metadata keeps IDs.
+            XCTAssertFalse(loaded.asrChunks[index].errorMessage?.contains(identifier) ?? false)
+        }
+        XCTAssertEqual(try store.load(), loaded)
+    }
+
+    func testStructuredDiagnosticsRejectRawErrorsAndUnsafeFieldsBeforeSave() throws {
+        XCTAssertNil(ASRDiagnostic(error: NSError(domain: "private", code: 1,
+            userInfo: [NSLocalizedDescriptionKey: "secret response"])))
+        let store = ProjectStore(folderURL: root)
+        var project = try store.create(title: "Safe diagnostics")
+        let values = ["sk-private-credential", "private-speech-transcript", "PRIVATE_TOKEN",
+                      "https://example.invalid/private", "data:audio/wav;base64,UklGRPRIVATE"]
+        for value in values {
+            let error = ASRError.provider(code: value, requestID: value)
+            let diagnostic = try XCTUnwrap(ASRDiagnostic(error: error))
+            XCTAssertNil(diagnostic.code)
+            XCTAssertNil(diagnostic.requestID)
+            XCTAssertFalse(diagnostic.safeSummary.contains(value))
+            project.asrChunks = [ASRChunk(relativePath: "audio/0.wav", startSeconds: 0,
+                                          durationSeconds: 1, state: .failed, diagnostic: diagnostic)]
+            try store.save(project)
+            XCTAssertFalse(try String(contentsOf: store.manifestURL).contains(value))
+            XCTAssertNil(try store.load().asrChunks[0].diagnostic?.requestID)
+        }
+    }
+
+    func testImportedMaliciousDiagnosticIsSanitizedAndRewrittenOnLoad() throws {
+        let store = ProjectStore(folderURL: root)
+        var project = try store.create(title: "Imported")
+        project.asrChunks = [ASRChunk(relativePath: "audio/0.wav", startSeconds: 0,
+                                      durationSeconds: 1, state: .failed)]
+        try store.save(project)
+        var object = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(contentsOf: store.manifestURL)) as? [String: Any])
+        var chunks = try XCTUnwrap(object["asrChunks"] as? [[String: Any]])
+        chunks[0]["diagnostic"] = [
+            "stage": "HTTP", "httpStatus": 900, "code": "PRIVATE_PROVIDER_ECHO",
+            "requestID": "https://example.invalid/private?key=PRIVATE_CREDENTIAL",
+            "message": "PRIVATE_RAW_MESSAGE"
+        ]
+        object["asrChunks"] = chunks
+        try JSONSerialization.data(withJSONObject: object).write(to: store.manifestURL)
+        let loaded = try store.load()
+        let diagnostic = try XCTUnwrap(loaded.asrChunks[0].diagnostic)
+        XCTAssertEqual(diagnostic.stage, .http)
+        XCTAssertNil(diagnostic.httpStatus)
+        XCTAssertNil(diagnostic.code)
+        XCTAssertNil(diagnostic.requestID)
+        let safeFile = try String(contentsOf: store.manifestURL)
+        for value in ["PRIVATE_PROVIDER_ECHO", "PRIVATE_CREDENTIAL", "PRIVATE_RAW_MESSAGE", "example.invalid", "\"message\""] {
+            XCTAssertFalse(safeFile.contains(value), value)
+            XCTAssertFalse(diagnostic.safeSummary.contains(value), value)
+        }
+        XCTAssertEqual(try store.load(), loaded)
+    }
+
+    func testDiagnosticRejectsInconsistentStageMetadata() throws {
+        let data = Data(#"{"stage":"Request validation","httpStatus":401,"code":"InvalidApiKey","requestID":"21da954f-704d-4931-8fe5-444d8e6fe33f"}"#.utf8)
+        let diagnostic = try JSONDecoder().decode(ASRDiagnostic.self, from: data)
+        XCTAssertEqual(diagnostic.stage, .requestValidation)
+        XCTAssertNil(diagnostic.httpStatus)
+        XCTAssertNil(diagnostic.code)
+        XCTAssertNil(diagnostic.requestID)
+        let encoded = try XCTUnwrap(String(data: JSONEncoder().encode(diagnostic), encoding: .utf8))
+        XCTAssertFalse(encoded.contains("InvalidApiKey"))
+        XCTAssertFalse(encoded.contains("21da954f"))
+    }
+
+    func testOldManifestWithoutDiagnosticStillLoads() throws {
+        let store = ProjectStore(folderURL: root)
+        var project = try store.create(title: "Old project")
+        project.asrChunks = [ASRChunk(relativePath: "audio/0.wav", startSeconds: 0,
+                                      durationSeconds: 1, state: .failed, errorMessage: "Network unavailable")]
+        try store.save(project)
+        let contents = try String(contentsOf: store.manifestURL)
+        XCTAssertFalse(contents.contains("\"diagnostic\""))
+        XCTAssertEqual(try store.load().asrChunks[0].errorMessage, "Network unavailable")
+        XCTAssertNil(try store.load().asrChunks[0].diagnostic)
+    }
+
+    func testRecoveryClearsInFlightDiagnosticAndKeepsFailedDiagnostic() throws {
+        let store = ProjectStore(folderURL: root)
+        var project = try store.create(title: "Recovery diagnostics")
+        let diagnostic = ASRDiagnostic(error: ASRError.httpStatus(500, code: "InternalError",
+                                      requestID: "21da954f-704d-4931-8fe5-444d8e6fe33f"))
+        project.asrChunks = [
+            ASRChunk(index: 0, relativePath: "audio/0.wav", startSeconds: 0, durationSeconds: 1,
+                     state: .transcribing, diagnostic: diagnostic),
+            ASRChunk(index: 1, relativePath: "audio/1.wav", startSeconds: 1, durationSeconds: 1,
+                     state: .failed, diagnostic: diagnostic)
+        ]
+        try store.save(project)
+        let loaded = try store.load()
+        XCTAssertEqual(loaded.asrChunks[0].state, .pending)
+        XCTAssertNil(loaded.asrChunks[0].diagnostic)
+        XCTAssertEqual(loaded.asrChunks[1].diagnostic, diagnostic)
+    }
+
+    func testHTMLAndBundleExportsExcludeStructuredASRDiagnostics() throws {
+        let source = ProjectStore(folderURL: root.appendingPathComponent("source"))
+        var project = try source.create(title: "Export")
+        let identifier = "21da954f-704d-4931-8fe5-444d8e6fe33f"
+        let error = ASRError.httpStatus(401, code: "InvalidApiKey", requestID: identifier)
+        project.asrChunks = [ASRChunk(relativePath: "audio/0.wav", startSeconds: 0,
+                                      durationSeconds: 1, state: .failed, diagnostic: ASRDiagnostic(error: error))]
+        project.reviewCards = [ReviewCard(text: "Edited text")]
+        let html = root.appendingPathComponent("export.html")
+        _ = try ProjectExporter.exportHTML(project: project, store: source, to: html)
+        let bundle = root.appendingPathComponent("bundle")
+        _ = try ProjectExporter.exportBundle(project: project, store: source, to: bundle)
+        for file in [html, bundle.appendingPathComponent("index.html"),
+                     bundle.appendingPathComponent("README.md"), bundle.appendingPathComponent("project.json")] {
+            let contents = try String(contentsOf: file)
+            for value in [identifier, "InvalidApiKey", "diagnostic", "httpStatus", "asrChunks"] {
+                XCTAssertFalse(contents.contains(value), "\(file.lastPathComponent): \(value)")
+            }
+        }
+    }
+
 }

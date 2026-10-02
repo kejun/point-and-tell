@@ -3,39 +3,46 @@ import Foundation
 /// Normalizes JSON and SSE replies without inventing sentence or word timing.
 /// SSE is buffered by the callback transport; only sentence_end:true events are retained.
 public enum ASRResponseParser {
-    public static func parse(data: Data, contentType: String? = nil) throws -> ASRResult {
+    public static func parse(data: Data, contentType: String? = nil,
+                             redactingSecrets: [String] = []) throws -> ASRResult {
         guard var body = String(data: data, encoding: .utf8) else { throw ASRError.malformedResponse }
         if body.first == "\u{FEFF}" { body.removeFirst() }
         let trimmed = body.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty else { throw ASRError.malformedResponse }
         // Sniff JSON first: short clips can return JSON despite the SSE request header.
         if trimmed.hasPrefix("{") {
-            return try parseJSON(Data(trimmed.utf8))
+            return try parseJSON(Data(trimmed.utf8), redactingSecrets: redactingSecrets)
         }
         let isSSE = contentType?.lowercased().contains("text/event-stream") == true
             || trimmed.hasPrefix("data:") || trimmed.hasPrefix("event:")
             || trimmed.hasPrefix("id:") || trimmed.hasPrefix(":")
         guard isSSE else { throw ASRError.malformedResponse }
-        return try parseSSE(body)
+        return try parseSSE(body, redactingSecrets: redactingSecrets)
     }
 
-    static func errorMetadata(_ data: Data) -> (code: String?, requestID: String?) {
-        guard let value = try? JSONDecoder().decode(Envelope.self, from: data) else { return (nil, nil) }
-        return (value.code, value.requestID)
+    static func errorMetadata(_ data: Data, redactingSecrets: [String] = []) -> (code: String?, requestID: String?) {
+        // Error metadata must survive a malformed/irrelevant output field, but no
+        // provider "message" is decoded or retained because it may echo the request.
+        guard let value = try? JSONDecoder().decode(ErrorEnvelope.self, from: data) else { return (nil, nil) }
+        return (ASRSafeDiagnostics.code(value.code, redactingSecrets: redactingSecrets),
+                ASRSafeDiagnostics.requestID(value.requestID, redactingSecrets: redactingSecrets))
     }
 
-    private static func decode(_ data: Data) throws -> Envelope {
+    private static func decode(_ data: Data, redactingSecrets: [String]) throws -> Envelope {
+        if let metadata = try? JSONDecoder().decode(ErrorEnvelope.self, from: data),
+           let code = metadata.code, !code.isEmpty {
+            throw ASRError.provider(
+                code: ASRSafeDiagnostics.code(code, redactingSecrets: redactingSecrets) ?? "UnrecognizedProviderError",
+                requestID: ASRSafeDiagnostics.requestID(metadata.requestID, redactingSecrets: redactingSecrets))
+        }
         let envelope: Envelope
         do { envelope = try JSONDecoder().decode(Envelope.self, from: data) }
         catch { throw ASRError.malformedResponse }
-        if let code = envelope.code, !code.isEmpty {
-            throw ASRError.provider(code: code, requestID: envelope.requestID)
-        }
         return envelope
     }
 
-    private static func parseJSON(_ data: Data) throws -> ASRResult {
-        let envelope = try decode(data)
+    private static func parseJSON(_ data: Data, redactingSecrets: [String]) throws -> ASRResult {
+        let envelope = try decode(data, redactingSecrets: redactingSecrets)
         guard let output = envelope.output else { throw ASRError.malformedResponse }
         if let payload = output.sentence ?? output.output?.sentence {
             guard payload.sentenceEnd != false else { throw ASRError.noFinalSentences }
@@ -46,20 +53,20 @@ public enum ASRResponseParser {
                 != sentence.text.trimmingCharacters(in: .whitespacesAndNewlines) {
                 // Non-streaming output.sentence can describe only the last sentence.
                 // Retain all recognized text, without applying that sentence's times to it.
-                return ASRResult(sentences: [ASRSentence(text: fullText)], requestID: envelope.requestID)
+                return ASRResult(sentences: [ASRSentence(text: fullText)], requestID: ASRSafeDiagnostics.requestID(envelope.requestID, redactingSecrets: redactingSecrets))
             }
-            guard !sentence.text.isEmpty else { throw ASRError.noFinalSentences }
-            return ASRResult(sentences: [sentence], requestID: envelope.requestID)
+            guard !sentence.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ASRError.noFinalSentences }
+            return ASRResult(sentences: [sentence], requestID: ASRSafeDiagnostics.requestID(envelope.requestID, redactingSecrets: redactingSecrets))
         }
         // Some JSON variants provide only complete text. Keep it explicitly untimed.
         if let text = output.text ?? output.output?.text,
            !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            return ASRResult(sentences: [ASRSentence(text: text)], requestID: envelope.requestID)
+            return ASRResult(sentences: [ASRSentence(text: text)], requestID: ASRSafeDiagnostics.requestID(envelope.requestID, redactingSecrets: redactingSecrets))
         }
         throw ASRError.noFinalSentences
     }
 
-    private static func parseSSE(_ body: String) throws -> ASRResult {
+    private static func parseSSE(_ body: String, redactingSecrets: [String]) throws -> ASRResult {
         let lines = body.replacingOccurrences(of: "\r\n", with: "\n")
             .replacingOccurrences(of: "\r", with: "\n").components(separatedBy: "\n")
         var dataLines: [String] = []
@@ -73,14 +80,14 @@ public enum ASRResponseParser {
             let json = dataLines.joined(separator: "\n")
             dataLines.removeAll(keepingCapacity: true)
             if json.trimmingCharacters(in: .whitespacesAndNewlines) == "[DONE]" { return }
-            let envelope = try decode(Data(json.utf8))
+            let envelope = try decode(Data(json.utf8), redactingSecrets: redactingSecrets)
             sawPayload = true
-            requestID = envelope.requestID ?? requestID
+            requestID = ASRSafeDiagnostics.requestID(envelope.requestID, redactingSecrets: redactingSecrets) ?? requestID
             guard let output = envelope.output else { throw ASRError.malformedResponse }
             guard let payload = output.sentence ?? output.output?.sentence else { return }
             guard payload.sentenceEnd == true else { return }
             let sentence = try normalized(payload)
-            guard !sentence.text.isEmpty else { return }
+            guard !sentence.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return }
             if let identifier = sentence.sentenceID {
                 let identity = "\(sentence.channelID ?? 0):\(identifier)"
                 if let index = identityIndexes[identity] { sentences[index] = sentence }
@@ -118,6 +125,18 @@ public enum ASRResponseParser {
         return ASRSentence(text: text, beginTimeMilliseconds: payload.beginTime,
                            endTimeMilliseconds: payload.endTime,
                            sentenceID: payload.sentenceID, channelID: payload.channelID)
+    }
+
+    private struct ErrorEnvelope: Decodable {
+        let code: String?
+        let requestID: String?
+        enum CodingKeys: String, CodingKey { case code; case requestID = "request_id" }
+
+        init(from decoder: Decoder) throws {
+            let container = try decoder.container(keyedBy: CodingKeys.self)
+            code = try? container.decode(String.self, forKey: .code)
+            requestID = try? container.decode(String.self, forKey: .requestID)
+        }
     }
 
     private struct Envelope: Decodable {
