@@ -28,7 +28,14 @@ jobs:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
           persist-credentials: false
       - name: Verify committed release archives
-        run: python3 scripts/verify-releases.py
+        run: |
+          python3 scripts/verify-releases.py
+          for archive in releases/v*/*.zip; do
+            target="$(mktemp -d)"
+            ditto -x -k "$archive" "$target"
+            codesign --verify --strict --verbose=2 "$target/Point & Tell.app"
+            rm -rf "$target"
+          done
       - name: Toolchain
         run: swift --version && xcodebuild -version && test "$(uname -m)" = "${{ matrix.arch }}"
       - name: Test pure core
@@ -36,8 +43,8 @@ jobs:
         run: swift test --arch ${{ matrix.arch }}
       - name: Build Universal macOS 11 app
         run: ARCH=universal scripts/build-app.sh
-      - name: Verify native PCM extraction
-        timeout-minutes: 2
+      - name: Verify native AAC audio chain
+        timeout-minutes: 4
         run: '"dist/Point & Tell.app/Contents/MacOS/PointAndTell" --audio-smoke-test "$PWD/dist/audio-smoke"'
       - name: Render native review UI fixture
         timeout-minutes: 2
@@ -57,5 +64,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: UI-smoke-evidence-${{ matrix.arch }}
-          path: dist/ui-smoke/window.png
+          path: |
+            dist/ui-smoke/window.png
+            dist/audio-smoke/**/results.json
           if-no-files-found: ignore

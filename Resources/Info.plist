@@ -6,8 +6,8 @@
 <key>CFBundleIdentifier</key><string>io.github.kejun.point-and-tell</string>
 <key>CFBundleExecutable</key><string>PointAndTell</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.1.0</string>
-<key>CFBundleVersion</key><string>1</string>
+<key>CFBundleShortVersionString</key><string>0.1.1</string>
+<key>CFBundleVersion</key><string>2</string>
 <key>LSMinimumSystemVersion</key><string>11.0</string>
 <key>NSHighResolutionCapable</key><true/>
 <key>NSMicrophoneUsageDescription</key><string>Record your explanation together with the selected screen. Audio is uploaded to Alibaba Cloud only when you choose Transcribe.</string>

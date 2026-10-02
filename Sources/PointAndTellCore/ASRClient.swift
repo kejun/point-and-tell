@@ -51,7 +51,8 @@ public enum ASRRequestBuilder {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.setValue(audio.durationSeconds >= 60 ? "enable" : "disable", forHTTPHeaderField: "X-DashScope-SSE")
         request.setValue("application/json, text/event-stream", forHTTPHeaderField: "Accept")
-        request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])
+        do { request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) }
+        catch { throw ASRError.requestEncoding }
         return request
     }
 }
@@ -202,13 +203,14 @@ public final class ASRClient {
         do {
             let request = try ASRRequestBuilder.makeRequest(wav: wav, apiKey: apiKey)
             let task = transport.send(request) { result in
-                let parsed: Result<[ASRSentence], Error> = result.flatMap { response in
+                let parsed: Result<[ASRSentence], Error> = result.mapError { ASRError.safeTransportError($0) }.flatMap { response in
                     guard (200..<300).contains(response.statusCode) else {
-                        let metadata = ASRResponseParser.errorMetadata(response.data)
+                        let metadata = ASRResponseParser.errorMetadata(response.data, redactingSecrets: [apiKey])
                         return .failure(ASRError.httpStatus(response.statusCode, code: metadata.code, requestID: metadata.requestID))
                     }
                     return Result {
-                        try ASRResponseParser.parse(data: response.data, contentType: response.contentType).sentences
+                        try ASRResponseParser.parse(data: response.data, contentType: response.contentType,
+                                                    redactingSecrets: [apiKey]).sentences
                     }
                 }
                 operation.finish(parsed)

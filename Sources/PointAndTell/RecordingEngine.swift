@@ -4,6 +4,7 @@ import AVFoundation
 import AudioToolbox
 import CoreGraphics
 import VideoToolbox
+import PointAndTellCore
 
 /// macOS 11-compatible screen + microphone recording. No frame arrays or unbounded
 /// sample queues are kept in the application: AVFoundation streams to the movie.
@@ -12,6 +13,7 @@ final class RecordingEngine: NSObject {
     enum EngineError: LocalizedError {
         case busy, cancelled, notRecording, invalidDestination, destinationExists
         case screenPermission, microphonePermission, microphoneUnavailable
+        case selectedMicrophoneUnavailable, microphoneConnection(String)
         case displayUnavailable, cannotConfigure(String), notEnoughDiskSpace
         case startTimedOut, finishTimedOut, interrupted(String)
 
@@ -25,6 +27,8 @@ final class RecordingEngine: NSObject {
             case .screenPermission: return "Allow Screen Recording for Point & Tell in System Preferences > Security & Privacy > Privacy, then quit and reopen the app if macOS requests it."
             case .microphonePermission: return "Allow Microphone access for Point & Tell in System Preferences > Security & Privacy > Privacy."
             case .microphoneUnavailable: return "No microphone is available. Connect or select a microphone in macOS Sound preferences."
+            case .selectedMicrophoneUnavailable: return "The selected microphone is no longer available. Reconnect it or explicitly choose another microphone, then try again. No different microphone was selected automatically."
+            case .microphoneConnection(let detail): return "The microphone connection is not ready: \(detail). Check the selected input in macOS Sound preferences. Any partial recording has been preserved."
             case .displayUnavailable: return "The selected display is no longer available. Select a connected display."
             case .cannotConfigure(let detail): return "Recording could not be configured: \(detail)"
             case .notEnoughDiskSpace: return "The recording volume needs at least 256 MB free. Existing recordings have been preserved."
@@ -32,6 +36,26 @@ final class RecordingEngine: NSObject {
             case .finishTimedOut: return "The recorder did not finish closing its movie. Its partial file has been preserved; do not overwrite it."
             case .interrupted(let reason): return "Recording stopped: \(reason). The existing movie has been preserved."
             }
+        }
+    }
+
+    struct MicrophoneChoice {
+        let uniqueID: String
+        let name: String
+        let isSystemDefault: Bool
+    }
+
+    /// Include external and virtual audio inputs on Big Sur as well as built-in
+    /// microphones. The older media-type enumeration is deliberately used here:
+    /// it remains supported on macOS 11 and does not filter out device types.
+    static func microphoneChoices() -> [MicrophoneChoice] {
+        let defaultID = AVCaptureDevice.default(for: .audio)?.uniqueID
+        return AVCaptureDevice.devices(for: .audio).filter { $0.isConnected }.map {
+            MicrophoneChoice(uniqueID: $0.uniqueID, name: $0.localizedName,
+                             isSystemDefault: $0.uniqueID == defaultID)
+        }.sorted {
+            if $0.isSystemDefault != $1.isSystemDefault { return $0.isSystemDefault }
+            return $0.name.localizedStandardCompare($1.name) == .orderedAscending
         }
     }
 
@@ -45,6 +69,17 @@ final class RecordingEngine: NSObject {
         /// AVCaptureMovieFileOutput chooses its encoder internally. A hardware
         /// preference is not proof of hardware use, so never label it as measured.
         let encoderDescription: String
+        /// The actual input resolved at start, not just the user's menu choice.
+        let microphoneID: String?
+        let microphoneName: String?
+        let audioConnectionEnabled: Bool
+        let audioConnectionActive: Bool
+        /// Maximum per-channel average/peak in dBFS; nil if no valid reading.
+        let microphoneAveragePowerDBFS: Float?
+        let microphonePeakPowerDBFS: Float?
+        /// checking / active / noSignal / unavailable / stopped. A level meter
+        /// is advisory and cannot establish speech or a valid saved audio track.
+        let microphoneHealth: String
         let lastError: String?
     }
 
@@ -76,6 +111,18 @@ final class RecordingEngine: NSObject {
     private var observations: [(NotificationCenter, NSObjectProtocol)] = []
     private var startWatchdog: DispatchWorkItem?
     private var finishWatchdog: DispatchWorkItem?
+    private var requestedMicrophoneID: String?
+    private var microphoneID: String?
+    private var microphoneName: String?
+    private var audioConnectionEnabled = false
+    private var audioConnectionActive = false
+    private var microphoneAveragePowerDBFS: Float?
+    private var microphonePeakPowerDBFS: Float?
+    private var microphoneHealth = "stopped"
+    private var microphoneTimer: DispatchSourceTimer?
+    private var movieDidStart = false
+    private var audioInactiveSince: TimeInterval?
+    private var quietSince: TimeInterval?
 
     override init() {
         super.init()
@@ -85,6 +132,7 @@ final class RecordingEngine: NSObject {
     deinit {
         startWatchdog?.cancel()
         finishWatchdog?.cancel()
+        microphoneTimer?.cancel()
         for (center, token) in observations { center.removeObserver(token) }
         // A normal app termination should wait for stop's completion instead.
         if output?.isRecording == true { output?.stopRecording() }
@@ -108,11 +156,17 @@ final class RecordingEngine: NSObject {
                    recordedBytes: output?.recordedFileSize ?? savedBytes,
                    requestedFramesPerSecond: requestedFPS, videoWidth: width,
                    videoHeight: height, encoderDescription: encoderDescription,
-                   lastError: lastErrorText)
+                   microphoneID: microphoneID, microphoneName: microphoneName,
+                   audioConnectionEnabled: audioConnectionEnabled,
+                   audioConnectionActive: audioConnectionActive,
+                   microphoneAveragePowerDBFS: microphoneAveragePowerDBFS,
+                   microphonePeakPowerDBFS: microphonePeakPowerDBFS,
+                   microphoneHealth: microphoneHealth,
+                   lastError: lastErrorText ?? pendingFailure?.localizedDescription)
         }
     }
 
-    func start(displayID: CGDirectDisplayID, fps: Int = 5, outputURL: URL,
+    func start(displayID: CGDirectDisplayID, fps: Int = 5, microphoneID: String? = nil, outputURL: URL,
                completion: @escaping (Result<Void, Error>) -> Void) {
         queue.async {
             guard self.phase == .idle else {
@@ -134,6 +188,17 @@ final class RecordingEngine: NSObject {
             self.savedBytes = 0
             self.pendingFailure = nil
             self.lastErrorText = nil
+            self.requestedMicrophoneID = microphoneID
+            self.microphoneID = nil
+            self.microphoneName = nil
+            self.audioConnectionEnabled = false
+            self.audioConnectionActive = false
+            self.microphoneAveragePowerDBFS = nil
+            self.microphonePeakPowerDBFS = nil
+            self.microphoneHealth = "checking"
+            self.movieDidStart = false
+            self.audioInactiveSince = nil
+            self.quietSince = nil
             self.width = 0
             self.height = 0
             self.requestedFPS = fps == 10 ? 10 : 5
@@ -201,7 +266,17 @@ final class RecordingEngine: NSObject {
         if let free = disk[.systemFreeSize] as? NSNumber, free.int64Value < 256 * 1_024 * 1_024 {
             throw EngineError.notEnoughDiskSpace
         }
-        guard let microphone = AVCaptureDevice.default(for: .audio) else { throw EngineError.microphoneUnavailable }
+        let availableMicrophones = AVCaptureDevice.devices(for: .audio).filter { $0.isConnected }
+        let resolvedID = CaptureDiagnostics.resolveMicrophoneID(
+            requested: requestedMicrophoneID,
+            systemDefault: AVCaptureDevice.default(for: .audio)?.uniqueID,
+            available: availableMicrophones.map(\.uniqueID))
+        guard let microphone = availableMicrophones.first(where: { $0.uniqueID == resolvedID }) else {
+            throw requestedMicrophoneID == nil
+                ? EngineError.microphoneUnavailable : EngineError.selectedMicrophoneUnavailable
+        }
+        microphoneID = microphone.uniqueID
+        microphoneName = microphone.localizedName
         let micInput = try AVCaptureDeviceInput(device: microphone)
         let captureSession = AVCaptureSession()
         let movie = AVCaptureMovieFileOutput()
@@ -244,6 +319,10 @@ final class RecordingEngine: NSObject {
             captureSession.commitConfiguration()
             throw EngineError.cannotConfigure("video and microphone connections are required")
         }
+        audio.isEnabled = true
+        // Audio channels are individually mutable on macOS. Enable the selected
+        // input's channels, but do not change the device's system gain or mute.
+        for channel in audio.audioChannels { channel.isEnabled = true }
         // setOutputSettings(_:for:) accepts video/audio encoding settings on
         // macOS. supportedOutputSettingsKeys and availableVideoCodecTypes on
         // AVCaptureMovieFileOutput are iOS-only and must not be queried here.
@@ -277,6 +356,15 @@ final class RecordingEngine: NSObject {
         observe(captureSession, operationID: id)
         captureSession.startRunning() // deliberately never blocks the main thread
         guard captureSession.isRunning else { throw EngineError.cannotConfigure("capture session did not start") }
+        refreshMicrophoneStatus()
+        guard audioConnectionEnabled else {
+            throw EngineError.microphoneConnection("the audio connection is disabled after the capture session started")
+        }
+        // isActive is inspected now and again at didStart. Allow at most two
+        // seconds for driver settling after didStart; this is an application
+        // grace period, not an AVFoundation guarantee. Never report startup
+        // success before the connection is both enabled and active.
+        startMicrophoneMonitoring(operationID: id)
         movie.startRecording(to: url, recordingDelegate: self)
         let watchdog = DispatchWorkItem { [weak self] in
             guard let self = self, self.operationID == id, self.phase == .starting else { return }
@@ -299,6 +387,18 @@ final class RecordingEngine: NSObject {
             self?.interrupt(EngineError.interrupted("the capture session was interrupted"), id: operationID)
         }
         observations.append((center, interruption))
+        let disconnected = center.addObserver(forName: AVCaptureDevice.wasDisconnectedNotification, object: nil, queue: nil) { [weak self] note in
+            guard let device = note.object as? AVCaptureDevice else { return }
+            let disconnectedID = device.uniqueID
+            self?.queue.async { [weak self] in
+                guard let self = self, self.operationID == operationID,
+                      self.microphoneID == disconnectedID, self.phase != .idle else { return }
+                self.pendingFailure = self.pendingFailure ?? EngineError.interrupted("the selected microphone was disconnected")
+                self.microphoneHealth = "unavailable"
+                if self.phase != .stopping { self.beginStopping() }
+            }
+        }
+        observations.append((center, disconnected))
         let workspace = NSWorkspace.shared.notificationCenter
         let sleep = workspace.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: nil) { [weak self] _ in
             self?.interrupt(EngineError.interrupted("the Mac is going to sleep"), id: operationID)
@@ -318,6 +418,7 @@ final class RecordingEngine: NSObject {
     private func beginStopping() {
         phase = .stopping
         startWatchdog?.cancel()
+        stopMicrophoneMonitoring()
         savedElapsed = currentDuration()
         if output?.isRecording == true { output?.stopRecording() }
         // Do NOT stop the session until didFinishRecording: stopping it early can
@@ -339,6 +440,7 @@ final class RecordingEngine: NSObject {
     private func finish(result: Result<URL, Error>, failure: Error?, notifyFinished: Bool = true) {
         startWatchdog?.cancel()
         finishWatchdog?.cancel()
+        stopMicrophoneMonitoring()
         savedElapsed = currentDuration()
         savedBytes = output?.recordedFileSize ?? savedBytes
         for (center, token) in observations { center.removeObserver(token) }
@@ -349,6 +451,11 @@ final class RecordingEngine: NSObject {
         phase = .idle
         lastResult = result
         lastErrorText = failure?.localizedDescription
+        audioConnectionEnabled = false
+        audioConnectionActive = false
+        microphoneAveragePowerDBFS = nil
+        microphonePeakPowerDBFS = nil
+        microphoneHealth = failure == nil ? "stopped" : "unavailable"
         let starts = startCompletion
         startCompletion = nil
         let stops = stopCompletions
@@ -362,6 +469,93 @@ final class RecordingEngine: NSObject {
             for completion in stops { completion(result) }
             if notifyFinished { self.onRecordingFinished?(result) }
         }
+    }
+
+    private func startMicrophoneMonitoring(operationID id: UUID) {
+        stopMicrophoneMonitoring()
+        let timer = DispatchSource.makeTimerSource(queue: queue)
+        timer.schedule(deadline: .now() + .milliseconds(200), repeating: .milliseconds(200),
+                       leeway: .milliseconds(30))
+        timer.setEventHandler { [weak self] in
+            guard let self = self, self.operationID == id,
+                  self.phase == .starting || self.phase == .recording else { return }
+            self.refreshMicrophoneStatus()
+            self.checkMicrophoneReadiness()
+        }
+        microphoneTimer = timer
+        timer.resume()
+    }
+
+    private func stopMicrophoneMonitoring() {
+        microphoneTimer?.setEventHandler {}
+        microphoneTimer?.cancel()
+        microphoneTimer = nil
+    }
+
+    /// Polling audioChannels is the AVFoundation metering API. Keep only the
+    /// latest aggregate; no sample buffers, audio data output or growing history.
+    private func refreshMicrophoneStatus() {
+        guard let connection = output?.connection(with: .audio) else {
+            audioConnectionEnabled = false
+            audioConnectionActive = false
+            microphoneAveragePowerDBFS = nil
+            microphonePeakPowerDBFS = nil
+            microphoneHealth = "unavailable"
+            return
+        }
+        audioConnectionEnabled = connection.isEnabled
+        audioConnectionActive = connection.isActive
+        let levels = CaptureDiagnostics.levels(channels: connection.audioChannels
+            .filter { $0.isEnabled }
+            .map { (average: $0.averagePowerLevel, peak: $0.peakHoldLevel) })
+        microphoneAveragePowerDBFS = levels.averageDBFS
+        microphonePeakPowerDBFS = levels.peakDBFS
+        guard audioConnectionEnabled, audioConnectionActive else {
+            microphoneHealth = movieDidStart ? "unavailable" : "checking"
+            quietSince = nil
+            return
+        }
+        let now = ProcessInfo.processInfo.systemUptime
+        // A silent room is not a hardware failure. Offer a speak/check-input
+        // hint only after three seconds of low or unavailable meter readings.
+        if let average = levels.averageDBFS, average > -60 {
+            quietSince = nil
+            microphoneHealth = "active"
+        } else {
+            if quietSince == nil { quietSince = now }
+            microphoneHealth = now - (quietSince ?? now) >= 3 ? "noSignal" : "active"
+        }
+    }
+
+    private func checkMicrophoneReadiness() {
+        guard movieDidStart, phase == .starting || phase == .recording else { return }
+        if !audioConnectionEnabled {
+            failMicrophoneConnection("the audio connection is missing or disabled")
+            return
+        }
+        if !audioConnectionActive {
+            let now = ProcessInfo.processInfo.systemUptime
+            if let since = audioInactiveSince, now - since >= 2 {
+                failMicrophoneConnection("the audio connection remained inactive for two seconds")
+            } else if audioInactiveSince == nil {
+                audioInactiveSince = now
+            }
+            return
+        }
+        audioInactiveSince = nil
+        if phase == .starting {
+            startWatchdog?.cancel()
+            phase = .recording
+            let callback = startCompletion
+            startCompletion = nil
+            if let callback = callback { deliver { callback(.success(())) } }
+        }
+    }
+
+    private func failMicrophoneConnection(_ detail: String) {
+        pendingFailure = pendingFailure ?? EngineError.microphoneConnection(detail)
+        microphoneHealth = "unavailable"
+        beginStopping()
     }
 
     private func currentDuration() -> Double {
@@ -385,11 +579,10 @@ extension RecordingEngine: AVCaptureFileOutputRecordingDelegate {
             guard self.output === output else { return }
             if self.phase == .stopping { output.stopRecording(); return }
             guard self.phase == .starting else { return }
-            self.startWatchdog?.cancel()
-            self.phase = .recording
-            let callback = self.startCompletion
-            self.startCompletion = nil
-            if let callback = callback { self.deliver { callback(.success(())) } }
+            self.movieDidStart = true
+            self.audioInactiveSince = nil
+            self.refreshMicrophoneStatus()
+            self.checkMicrophoneReadiness()
         }
     }
 
@@ -398,18 +591,21 @@ extension RecordingEngine: AVCaptureFileOutputRecordingDelegate {
         queue.async {
             guard self.output === output else { return }
             let expectedStop = self.phase == .stopping
-            let nsError = error as NSError?
-            let savedSuccessfully = error == nil ||
-                (nsError?.userInfo[AVErrorRecordingSuccessfullyFinishedKey] as? NSNumber)?.boolValue == true
             let exists = FileManager.default.fileExists(atPath: fileURL.path)
+            let savedSuccessfully = CaptureDiagnostics.mayReportSuccessfulFinish(
+                fileExists: exists, delegateReportedError: error != nil,
+                hasPendingFailure: self.pendingFailure != nil, expectedStop: expectedStop)
             let failure: Error? = self.pendingFailure ?? error ??
-                (!savedSuccessfully || !exists
+                (!exists
                     ? EngineError.interrupted("the movie could not be finalized")
                     : (expectedStop ? nil : EngineError.interrupted("the recorder ended unexpectedly")))
-            let result: Result<URL, Error> = savedSuccessfully && exists
+            let result: Result<URL, Error> = savedSuccessfully
                 ? .success(fileURL)
                 : .failure(failure ?? EngineError.interrupted("the movie could not be finalized"))
-            // Even a failed movie is never deleted: previous fragments may be recoverable.
+            // AVErrorRecordingSuccessfullyFinishedKey means a partial movie may
+            // be playable, not that this requested recording completed without
+            // interruption. Never turn an error or pending interruption into
+            // success merely because a file exists. Failed files are preserved.
             self.finish(result: result, failure: failure)
         }
     }

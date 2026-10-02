@@ -68,7 +68,10 @@ final class ASRClientTests: XCTestCase {
         let transport = ASRStubTransport()
         let finished = expectation(description: "validation complete")
         ASRClient(transport: transport).transcribe(wav: Data(), apiKey: "offline-test-key") { result in
-            if case .success = result { XCTFail("Invalid audio was accepted") }
+            if case .failure(let error) = result {
+                XCTAssertEqual((error as? ASRError)?.stage, .requestValidation)
+                XCTAssertTrue(ASRError.safeDescription(for: error).contains("[Request validation]"))
+            } else { XCTFail("Invalid audio was accepted") }
             finished.fulfill()
         }
         wait(for: [finished], timeout: 2)
@@ -105,12 +108,12 @@ final class ASRClientTests: XCTestCase {
         XCTAssertEqual(transport.requests.count, 1)
     }
 
-    func testTransportFailurePropagatesWithoutRetry() {
+    func testTransportFailureIsSafelyClassifiedWithoutRetry() {
         let transport = ASRStubTransport()
         transport.response = .failure(URLError(.timedOut))
         let finished = expectation(description: "timeout")
         ASRClient(transport: transport).transcribe(wav: ASRFixtures.tinyWAV, apiKey: "offline-test-key") { result in
-            if case .failure(let error) = result { XCTAssertEqual((error as? URLError)?.code, .timedOut) }
+            if case .failure(let error) = result { XCTAssertEqual(error as? ASRError, .transport(code: URLError.Code.timedOut.rawValue)) }
             else { XCTFail("Timeout accepted as success") }
             finished.fulfill()
         }
@@ -156,6 +159,72 @@ final class ASRClientTests: XCTestCase {
         wait(for: [finished, duplicated], timeout: 0.2)
         XCTAssertEqual(count, 1)
     }
+
+    func testClientDistinguishesHTTPProviderAndParsingFailures() {
+        let cases: [(ASRHTTPResponse, ASRFailureStage)] = [
+            (ASRHTTPResponse(statusCode: 400, data: Data(ASRFixtures.providerError.utf8)), .http),
+            (ASRHTTPResponse(statusCode: 200, data: Data(ASRFixtures.providerError.utf8)), .provider),
+            (ASRHTTPResponse(statusCode: 200, data: Data("<html>invalid</html>".utf8)), .responseParsing),
+            (ASRHTTPResponse(statusCode: 200, data: Data(#"{"output":{"text":""}}"#.utf8)), .responseParsing)
+        ]
+        for (response, expectedStage) in cases {
+            let transport = ASRStubTransport()
+            transport.response = .success(response)
+            let finished = expectation(description: "stage \(expectedStage.rawValue)")
+            ASRClient(transport: transport).transcribe(wav: ASRFixtures.tinyWAV, apiKey: "offline-test-key") { result in
+                if case .failure(let error) = result {
+                    XCTAssertEqual((error as? ASRError)?.stage, expectedStage)
+                    XCTAssertFalse(ASRError.safeDescription(for: error).contains("offline-test-key"))
+                } else { XCTFail("A failed response was accepted") }
+                finished.fulfill()
+            }
+            wait(for: [finished], timeout: 2)
+            XCTAssertEqual(transport.requests.count, 1)
+        }
+    }
+
+    func testClientRedactsActualKeyFromHTTPAndProviderMetadata() {
+        let key = "offline-test-key"
+        let data = Data(#"{"code":"InvalidApiKey","request_id":"offline-test-key","message":"Authorization: Bearer offline-test-key"}"#.utf8)
+        for status in [401, 200] {
+            let transport = ASRStubTransport()
+            transport.response = .success(ASRHTTPResponse(statusCode: status, data: data))
+            let finished = expectation(description: "redacted \(status)")
+            ASRClient(transport: transport).transcribe(wav: ASRFixtures.tinyWAV, apiKey: key) { result in
+                if case .failure(let error) = result {
+                    XCTAssertFalse(error.localizedDescription.contains(key))
+                    XCTAssertFalse(String(describing: error).contains(key))
+                    if status == 401 {
+                        XCTAssertEqual(error as? ASRError, .httpStatus(401, code: "InvalidApiKey", requestID: nil))
+                    } else {
+                        XCTAssertEqual(error as? ASRError, .provider(code: "InvalidApiKey", requestID: nil))
+                    }
+                } else { XCTFail("Provider rejection was accepted") }
+                finished.fulfill()
+            }
+            wait(for: [finished], timeout: 2)
+        }
+    }
+
+    func testClientTransportErrorDropsArbitraryProviderTextAndURL() {
+        let transport = ASRStubTransport()
+        transport.response = .failure(NSError(domain: "private-domain", code: 8, userInfo: [
+            NSLocalizedDescriptionKey: "https://example.invalid/private?key=offline-test-key data:audio/wav;base64,private"
+        ]))
+        let finished = expectation(description: "safe transport")
+        ASRClient(transport: transport).transcribe(wav: ASRFixtures.tinyWAV, apiKey: "offline-test-key") { result in
+            if case .failure(let error) = result {
+                XCTAssertEqual(error as? ASRError, .transport(code: nil))
+                XCTAssertTrue(error.localizedDescription.contains("[Transport]"))
+                XCTAssertFalse(error.localizedDescription.contains("private"))
+                XCTAssertFalse(error.localizedDescription.contains("offline-test-key"))
+            } else { XCTFail("Transport failure accepted") }
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 2)
+        XCTAssertEqual(transport.requests.count, 1)
+    }
+
 }
 
 private final class ASRStubHandle: ASRCancellable {
