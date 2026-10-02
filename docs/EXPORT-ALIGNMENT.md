@@ -16,3 +16,11 @@ The two primary actions are directly visible above the workspace: **导出独立
 Provider schema: https://help.aliyun.com/en/model-studio/fun-asr-flash-recorded-speech-recognition-http-api (sentence/word timestamps and finalized SSE events). Model and request/upload behavior are unchanged.
 
 Verification covers multi-image interleaving in HTML/Markdown/JSON, chunk offsets, millisecond boundaries, equal-time images, Unicode/punctuation, missing/invalid timestamps, manual edits, old project decoding, and both visible buttons in compact/light/dark AppKit rendering.
+
+## Rendered export
+
+The actual exported fixture passes desktop and 390px WebKit checks for speech/image grouping, embedded-image loading and horizontal overflow. [Offline HTML fixture](examples/timeline.html).
+
+![Desktop export](screenshots/export-desktop.png)
+
+![Compact export](screenshots/export-compact.png)

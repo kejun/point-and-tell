@@ -8,11 +8,11 @@ Record your screen while explaining what should change. Mark the important momen
 
 ![Native review workspace](docs/screenshots/review-light.png)
 
-**Native macOS 11+, Intel + Apple Silicon. Preview v0.2.0.** No Electron, local language model, account, server, or database.
+**Native macOS 11+, Intel + Apple Silicon. Preview v0.2.1.** No Electron, local language model, account, server, or database.
 
 ## Get the app
 
-[Download v0.2.0 Universal](releases/v0.2.0/Point-and-Tell-v0.2.0-macOS-universal.zip?raw=true) for Intel and Apple Silicon. The application ZIP, SHA-256 checksum and exact source/build manifest are committed under [releases/v0.2.0](releases/v0.2.0). See the [release notes](releases/README.md) for verification and rollback details.
+[Download v0.2.1 Universal](releases/v0.2.1/Point-and-Tell-v0.2.1-macOS-universal.zip?raw=true) for Intel and Apple Silicon. The application ZIP, SHA-256 checksum and exact source/build manifest are committed under [releases/v0.2.1](releases/v0.2.1). See the [release notes](releases/README.md) for verification and rollback details.
 
 The app is ad-hoc signed, **not Apple-notarized**. On macOS 11, extract the ZIP, move the app to Applications, then use Finder → right-click → Open if Gatekeeper asks. Do not disable system security. No Apple Developer account is required to build locally.
 
