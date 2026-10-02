@@ -46,8 +46,10 @@ final class AudioChunker {
     static let sampleRate = 16_000
     static let maximumChunkSeconds = 180
 
-    /// Completion runs on main. Calls on the same object are serialized. Existing
-    /// files are not overwritten. Give retries a new/empty audio directory.
+    /// Completion runs on main. Calls on the same object are serialized. Each
+    /// attempt writes to a fresh subdirectory, so a retry safely regenerates the
+    /// WAVs without overwriting completed or crash-interrupted earlier attempts.
+    /// Returned paths include that subdirectory and remain relative to directory.
     func chunk(movieURL: URL, directory: URL,
                completion: @escaping (Result<[AudioChunk], Error>) -> Void) {
         queue.async {
@@ -59,7 +61,9 @@ final class AudioChunker {
     }
 
     private func extract(movieURL: URL, directory: URL) throws -> [AudioChunk] {
-        let sink = try ChunkSink(directory: directory)
+        let attemptName = "extraction-" + UUID().uuidString.lowercased()
+        let attemptDirectory = directory.appendingPathComponent(attemptName, isDirectory: true)
+        let sink = try ChunkSink(directory: attemptDirectory, relativePrefix: attemptName)
         var reader: AVAssetReader?
         do {
             let asset = AVURLAsset(url: movieURL)
@@ -149,6 +153,7 @@ final class AudioChunker {
 
     private final class ChunkSink {
         let directory: URL
+        private let relativePrefix: String
         private(set) var chunks: [AudioChunk] = []
         private var file: FileHandle?
         private var fileURL: URL?
@@ -158,8 +163,12 @@ final class AudioChunker {
         private let maxFrames = Int64(AudioChunker.sampleRate * AudioChunker.maximumChunkSeconds)
         private let silence = Data(count: 64 * 1_024)
 
-        init(directory: URL) throws {
+        init(directory: URL, relativePrefix: String) throws {
             self.directory = directory
+            self.relativePrefix = relativePrefix
+            guard !FileManager.default.fileExists(atPath: directory.path) else {
+                throw Failure.fileExists(directory.lastPathComponent)
+            }
             try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
         }
 
@@ -227,7 +236,7 @@ final class AudioChunker {
             file = nil
             fileURL = nil
             if chunkFrames > 0 {
-                chunks.append(AudioChunk(index: chunks.count, relativePath: url.lastPathComponent,
+                chunks.append(AudioChunk(index: chunks.count, relativePath: relativePrefix + "/" + url.lastPathComponent,
                                          startSeconds: Double(chunkStartFrame) / Double(AudioChunker.sampleRate),
                                          durationSeconds: Double(chunkFrames) / Double(AudioChunker.sampleRate)))
             }

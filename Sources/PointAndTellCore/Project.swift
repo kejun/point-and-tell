@@ -45,11 +45,14 @@ public struct VisualAnchor: Codable, Equatable, Identifiable, Sendable {
     public var imageRelativePath: String
     public var kind: AnchorKind
     public var pointer: NormalizedPoint?
+    /// For pen anchors, the annotation remains relevant while this interval is active.
+    /// timestamp remains the source screenshot's recording time.
+    public var endTimestamp: Double?
 
     public init(id: UUID = UUID(), timestamp: Double, imageRelativePath: String,
-                kind: AnchorKind = .frame, pointer: NormalizedPoint? = nil) {
+                kind: AnchorKind = .frame, pointer: NormalizedPoint? = nil, endTimestamp: Double? = nil) {
         self.id = id; self.timestamp = timestamp; self.imageRelativePath = imageRelativePath
-        self.kind = kind; self.pointer = pointer
+        self.kind = kind; self.pointer = pointer; self.endTimestamp = endTimestamp
     }
 }
 
@@ -130,9 +133,11 @@ public struct ASRChunk: Codable, Equatable, Identifiable, Sendable {
         var safe = message
         let patterns = [
             "(?i)bearer\\s+[^\\s,;]+",
-            "(?i)(?:api[_-]?key|authorization|token|secret|password)\\s*[:=]\\s*[^\\s,;]+",
+            "(?i)[\"']?(?:api[_-]?key|authorization|token|secret|password)[\"']?\\s*[:=]\\s*(?:\"[^\"]*\"|'[^']*'|[^\\s,;}]+)",
             "(?i)sk-[a-z0-9_-]+",
             "(?i)https?://[^\\s<>]+",
+            "(?i)[a-z]:\\\\[^\\s,;]+",
+            "[A-Za-z0-9_+-]{32,}(?:\\.[A-Za-z0-9_+-]+)*",
             "(?:file://)?/(?:[^\\s/]+/)*[^\\s,;]+"
         ]
         for pattern in patterns {
@@ -282,6 +287,9 @@ public final class ProjectStore {
         }
         try unique(project.anchors.map(\.id)); try unique(project.transcripts.map(\.id))
         try unique(project.reviewCards.map(\.id)); try unique(project.asrChunks.map(\.id))
+        if Set(project.asrChunks.map(\.index)).count != project.asrChunks.count {
+            throw ProjectError.invalidManifest("duplicate chunk indices")
+        }
         if let recording = project.recording {
             _ = try resolveRelativePath(recording.relativePath)
             if let audio = recording.audioRelativePath { _ = try resolveRelativePath(audio) }
@@ -291,6 +299,10 @@ public final class ProjectStore {
         for anchor in project.anchors {
             _ = try resolveRelativePath(anchor.imageRelativePath)
             try time(anchor.timestamp)
+            if let end = anchor.endTimestamp {
+                try time(end)
+                if end < anchor.timestamp { throw ProjectError.invalidManifest("anchor interval is reversed") }
+            }
             if let point = anchor.pointer,
                !point.x.isFinite || !point.y.isFinite || !(0...1).contains(point.x) || !(0...1).contains(point.y) {
                 throw ProjectError.invalidManifest("pointer must be normalized")

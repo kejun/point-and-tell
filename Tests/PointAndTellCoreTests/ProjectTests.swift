@@ -14,7 +14,7 @@ final class ProjectTests: XCTestCase {
         let store = ProjectStore(folderURL: root)
         var project = try store.create(title: "中文演示 🖊️")
         let anchor = VisualAnchor(timestamp: 2.75, imageRelativePath: "frames/one.png", kind: .pen,
-                                  pointer: NormalizedPoint(x: 0.2, y: 0.8))
+                                  pointer: NormalizedPoint(x: 0.2, y: 0.8), endTimestamp: 4.25)
         let transcript = TranscriptSegment(text: "你好", startSeconds: 2.125, endSeconds: 4.875)
         project.anchors = [anchor]
         project.transcripts = [transcript]
@@ -98,11 +98,11 @@ final class ProjectTests: XCTestCase {
         let store = ProjectStore(folderURL: root)
         var project = try store.create(title: "Secrets")
         var chunk = ASRChunk(relativePath: "audio/chunk.wav", startSeconds: 0, durationSeconds: 1)
-        chunk.errorMessage = "Bearer PRIVATE_TOKEN api_key=PRIVATE_KEY https://example.test/?token=SECRET /Users/person/private.wav sk-sensitivevalue"
+        chunk.errorMessage = "Bearer PRIVATE_TOKEN api_key=PRIVATE_KEY https://example.test/?token=SECRET /Users/person/private.wav sk-sensitivevalue {\"password\":\"QUOTED VALUE\"} C:\\private\\audio.wav"
         project.asrChunks = [chunk]
         try store.save(project)
         let contents = try String(contentsOf: store.manifestURL)
-        for secret in ["PRIVATE_TOKEN", "PRIVATE_KEY", "example.test", "SECRET", "/Users/", "sk-sensitivevalue"] {
+        for secret in ["PRIVATE_TOKEN", "PRIVATE_KEY", "example.test", "SECRET", "/Users/", "sk-sensitivevalue", "QUOTED VALUE", "private\\\\audio"] {
             XCTAssertFalse(contents.contains(secret), secret)
         }
     }
@@ -112,5 +112,14 @@ final class ProjectTests: XCTestCase {
         _ = try store.create(title: "Original")
         XCTAssertThrowsError(try store.create(title: "Replacement"))
         XCTAssertEqual(try store.load().title, "Original")
+    }
+
+    func testInvalidPenIntervalIsRejected() throws {
+        let store = ProjectStore(folderURL: root)
+        var project = try store.create(title: "Interval")
+        project.anchors = [VisualAnchor(timestamp: 5, imageRelativePath: "frames/pen.png", kind: .pen, endTimestamp: 4)]
+        XCTAssertThrowsError(try store.save(project))
+        project.anchors[0].endTimestamp = .infinity
+        XCTAssertThrowsError(try store.save(project))
     }
 }

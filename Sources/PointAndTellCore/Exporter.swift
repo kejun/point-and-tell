@@ -8,14 +8,25 @@ public struct ExportResult: Equatable {
     }
 }
 
+/// Conservative budgets keep self-contained HTML preparation bounded on 8 GB Macs.
+/// Callers may choose smaller limits; source media is preserved if a limit is reached.
+public struct ExportLimits {
+    public var maximumImageBytes: Int
+    public var maximumHTMLBytes: Int
+    public init(maximumImageBytes: Int = 256 * 1_024 * 1_024, maximumHTMLBytes: Int = 512 * 1_024 * 1_024) {
+        self.maximumImageBytes = maximumImageBytes; self.maximumHTMLBytes = maximumHTMLBytes
+    }
+}
+
 public enum ExportError: Error, LocalizedError, Equatable {
-    case destinationExists, destinationInsideProject, invalidPNG, imageTooLarge, invalidDestination
+    case destinationExists, destinationInsideProject, invalidPNG, imageTooLarge, exportTooLarge, invalidDestination
     public var errorDescription: String? {
         switch self {
         case .destinationExists: return "Choose a new folder for the export so existing files are not overwritten."
         case .destinationInsideProject: return "Choose an export location outside the project folder."
         case .invalidPNG: return "A selected image is not a PNG file."
         case .imageTooLarge: return "A selected image is too large to safely export."
+        case .exportTooLarge: return "This export exceeds the memory-safe image budget. Use fewer or smaller screenshots and try again. The project has been preserved."
         case .invalidDestination: return "The export destination must be a local file location."
         }
     }
@@ -28,6 +39,7 @@ public enum ProjectExporter {
         let id: UUID
         let relativePath: String
         let timestampSeconds: Double
+        let endTimestampSeconds: Double?
         let kind: AnchorKind
     }
     private struct ExportCard: Codable {
@@ -52,9 +64,10 @@ public enum ProjectExporter {
     }
 
     @discardableResult
-    public static func exportHTML(project: ProjectManifest, store: ProjectStore, to destination: URL) throws -> ExportResult {
+    public static func exportHTML(project: ProjectManifest, store: ProjectStore, to destination: URL,
+                                  limits: ExportLimits = ExportLimits()) throws -> ExportResult {
         try validateDestination(destination, store: store)
-        let prepared = try prepare(project: project, store: store)
+        let prepared = try prepare(project: project, store: store, limits: limits)
         let html = renderHTML(prepared)
         try Data(html.utf8).write(to: destination, options: .atomic)
         return ExportResult(outputURL: destination, warnings: prepared.warnings)
@@ -63,11 +76,12 @@ public enum ProjectExporter {
     /// Writes to a sibling staging directory and renames only a fully built bundle.
     /// Existing destinations are rejected, rather than merged with stale content.
     @discardableResult
-    public static func exportBundle(project: ProjectManifest, store: ProjectStore, to destination: URL) throws -> ExportResult {
+    public static func exportBundle(project: ProjectManifest, store: ProjectStore, to destination: URL,
+                                    limits: ExportLimits = ExportLimits()) throws -> ExportResult {
         try validateDestination(destination, store: store)
         let manager = FileManager.default
         guard !manager.fileExists(atPath: destination.path) else { throw ExportError.destinationExists }
-        let prepared = try prepare(project: project, store: store)
+        let prepared = try prepare(project: project, store: store, limits: limits)
         let parent = destination.deletingLastPathComponent()
         let staging = parent.appendingPathComponent(".point-and-tell-export-\(UUID().uuidString)", isDirectory: true)
         try manager.createDirectory(at: staging, withIntermediateDirectories: false)
@@ -94,16 +108,31 @@ public enum ProjectExporter {
         guard Array(target.prefix(root.count)) != root else { throw ExportError.destinationInsideProject }
     }
 
-    private static func prepare(project: ProjectManifest, store: ProjectStore) throws -> Prepared {
+    private static func prepare(project: ProjectManifest, store: ProjectStore, limits: ExportLimits) throws -> Prepared {
         let cards = project.reviewCards.isEmpty
             ? FrameMatcher.suggestCards(for: project.transcripts, anchors: project.anchors) : project.reviewCards
         // Avoid Dictionary(uniqueKeysWithValues:) trapping on a malformed, unsaved project.
         var anchors: [UUID: VisualAnchor] = [:]
         for anchor in project.anchors { anchors[anchor.id] = anchor }
         var imageData: [UUID: Data] = [:]
+        var imageBytes = 0
+        var estimatedHTMLBytes = 4_096
+        func addHTMLBudget(_ count: Int) throws {
+            guard count >= 0, estimatedHTMLBytes <= limits.maximumHTMLBytes,
+                  count <= limits.maximumHTMLBytes - estimatedHTMLBytes else { throw ExportError.exportTooLarge }
+            estimatedHTMLBytes += count
+        }
+        func textBudget(_ text: String) throws {
+            let count = text.utf8.count
+            guard count <= Int.max / 6 else { throw ExportError.exportTooLarge }
+            try addHTMLBudget(count * 6) // HTML escaping expands a quote to at most six bytes.
+        }
+        try textBudget(project.title)
         var warnings: [String] = []
         var exportedCards: [ExportCard] = []
         for (index, card) in cards.enumerated() {
+            try textBudget(card.text)
+            try addHTMLBudget(1_024)
             var images: [ExportImage] = []
             var missing = 0
             var seen = Set<UUID>()
@@ -125,15 +154,22 @@ public enum ProjectExporter {
                     let values = try imageURL.resourceValues(forKeys: [.isRegularFileKey, .fileSizeKey])
                     guard values.isRegularFile == true else { throw ExportError.invalidPNG }
                     guard (values.fileSize ?? 0) <= 64 * 1_024 * 1_024 else { throw ExportError.imageTooLarge }
+                    guard let fileSize = values.fileSize, fileSize >= 0,
+                          imageBytes <= limits.maximumImageBytes,
+                          fileSize <= limits.maximumImageBytes - imageBytes else { throw ExportError.exportTooLarge }
                     let bytes = try Data(contentsOf: imageURL)
-                    guard bytes.count >= 24,
-                          Array(bytes.prefix(8)) == [137, 80, 78, 71, 13, 10, 26, 10],
-                          Array(bytes[12..<16]) == [73, 72, 68, 82] else { throw ExportError.invalidPNG }
+                    guard bytes.count <= 64 * 1_024 * 1_024 else { throw ExportError.imageTooLarge }
+                    guard bytes.count <= limits.maximumImageBytes - imageBytes else { throw ExportError.exportTooLarge }
+                    guard validPNG(bytes) else { throw ExportError.invalidPNG }
                     imageData[frameID] = bytes
+                    imageBytes += bytes.count
                 }
+                // Count every image occurrence: a single image can be selected on many cards.
+                if let bytes = imageData[frameID] { try addHTMLBudget(4 * ((bytes.count + 2) / 3) + 512) }
                 images.append(ExportImage(id: frameID,
                                           relativePath: "images/\(frameID.uuidString.lowercased()).png",
-                                          timestampSeconds: anchor.timestamp, kind: anchor.kind))
+                                          timestampSeconds: anchor.timestamp, endTimestampSeconds: anchor.endTimestamp,
+                                          kind: anchor.kind))
             }
             exportedCards.append(ExportCard(id: card.id, text: card.text,
                                             startSeconds: card.isTimed ? card.startSeconds : nil,
@@ -166,6 +202,45 @@ public enum ProjectExporter {
         <style>body{margin:0;background:#f4f4f2;color:#202624;font:17px/1.6 -apple-system,BlinkMacSystemFont,sans-serif}main{max-width:980px;margin:auto;padding:40px 24px}h1{line-height:1.15;overflow-wrap:anywhere}h2{font-size:15px;color:#596b62}.card{background:white;border:1px solid #dce2de;border-radius:16px;padding:24px;margin:22px 0;break-inside:avoid}.time,figcaption{font-size:13px;color:#66736c}.transcript{white-space:pre-wrap;overflow-wrap:anywhere}figure{margin:18px 0 0}img{display:block;max-width:100%;height:auto;border:1px solid #e3e7e4;border-radius:8px}.notice{color:#8c5029}footer{font-size:13px;color:#66736c}@media print{body{background:white}main{padding:0}.card{box-shadow:none}}</style></head>
         <body><main><h1>\(title)</h1>\(cards)<footer>Created with Point &amp; Tell · self-contained offline document</footer></main></body></html>
         """
+    }
+
+    private static let pngCRCTable: [UInt32] = (0..<256).map { value in
+        var crc = UInt32(value)
+        for _ in 0..<8 { crc = (crc & 1) == 1 ? 0xedb88320 ^ (crc >> 1) : crc >> 1 }
+        return crc
+    }
+
+    /// Validate structure, dimensions and chunk checksums without platform image frameworks.
+    /// This catches interrupted/truncated screenshot writes before making a broken document.
+    private static func validPNG(_ data: Data) -> Bool {
+        guard data.count >= 45, Array(data.prefix(8)) == [137, 80, 78, 71, 13, 10, 26, 10] else { return false }
+        func u32(_ offset: Int) -> UInt32 {
+            (UInt32(data[offset]) << 24) | (UInt32(data[offset + 1]) << 16)
+                | (UInt32(data[offset + 2]) << 8) | UInt32(data[offset + 3])
+        }
+        var offset = 8
+        var hasHeader = false
+        var hasImageData = false
+        while offset <= data.count - 12 {
+            let length = Int(u32(offset))
+            guard length <= data.count - offset - 12 else { return false }
+            let type = u32(offset + 4)
+            if !hasHeader {
+                guard type == 0x49484452, length == 13 else { return false } // IHDR
+                let width = u32(offset + 8), height = u32(offset + 12)
+                guard width > 0, height > 0, UInt64(width) * UInt64(height) <= 40_000_000 else { return false }
+                hasHeader = true
+            } else if type == 0x49484452 { return false }
+            var crc: UInt32 = 0xffffffff
+            for byte in data[(offset + 4)..<(offset + 8 + length)] {
+                crc = pngCRCTable[Int((crc ^ UInt32(byte)) & 0xff)] ^ (crc >> 8)
+            }
+            guard (crc ^ 0xffffffff) == u32(offset + 8 + length) else { return false }
+            if type == 0x49444154, length > 0 { hasImageData = true } // IDAT
+            offset += 12 + length
+            if type == 0x49454e44 { return length == 0 && hasImageData && offset == data.count } // IEND
+        }
+        return false
     }
 
     private static func renderMarkdown(_ document: ExportDocument) -> String {

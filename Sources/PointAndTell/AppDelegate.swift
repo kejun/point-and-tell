@@ -3,7 +3,7 @@ import AppKit
 import AVFoundation
 import PointAndTellCore
 
-final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate {
+final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource, NSTableViewDelegate, NSWindowDelegate, NSTextViewDelegate {
     private var window: NSWindow!
     private var toolbar: NSPanel!
     private let screenPicker = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -44,6 +44,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         makeMenu(); makeWindow(); makeToolbar(); installShortcut()
         recorder.onFailure = { [weak self] error in self?.recordingFailed(error) }
         window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
+        if let index = CommandLine.arguments.firstIndex(of: "--smoke-test"), CommandLine.arguments.indices.contains(index + 1) { runUISmokeTest(directory: URL(fileURLWithPath: CommandLine.arguments[index + 1])) }
+    }
+
+
+    /// Deterministic no-network/no-capture UI fixture for macOS CI. This renders
+    /// this app's own view, never takes a screenshot of the user's desktop.
+    private func runUISmokeTest(directory: URL) {
+        do {
+            try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+            let demoStore = ProjectStore(folderURL: directory.appendingPathComponent("fixture.pointtell"))
+            var demo = try demoStore.create(title: "Point & Tell · 示例讲解")
+            let context = CGContext(data: nil, width: 960, height: 540, bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
+            context.setFillColor(NSColor(calibratedRed: 0.08, green: 0.13, blue: 0.21, alpha: 1).cgColor); context.fill(CGRect(x: 0, y: 0, width: 960, height: 540))
+            context.setFillColor(NSColor.systemTeal.cgColor); context.fill(CGRect(x: 80, y: 70, width: 800, height: 370))
+            context.setStrokeColor(NSColor.systemRed.cgColor); context.setLineWidth(12); context.strokeEllipse(in: CGRect(x: 580, y: 300, width: 220, height: 105))
+            let image = context.makeImage()!; try VisualCapture.save(image, to: demoStore.folderURL.appendingPathComponent("frames/demo.png"))
+            let anchor = VisualAnchor(timestamp: 3.2, imageRelativePath: "frames/demo.png", kind: .pen)
+            demo.anchors = [anchor]; demo.reviewCards = [ReviewCard(text: "请把右上角这个按钮改大一些，让操作更容易看见。", frameIDs: [anchor.id], startSeconds: 2.1, endSeconds: 7.8), ReviewCard(text: "这句暂时没有可靠时间戳，可以手动选图。")]
+            try demoStore.save(demo); store = demoStore; project = demo; report("UI smoke fixture · 没有录屏、麦克风或网络请求"); refresh(); table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false)
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) {
+                guard let view = self.window.contentView, let rep = view.bitmapImageRepForCachingDisplay(in: view.bounds) else { exit(2) }
+                view.cacheDisplay(in: view.bounds, to: rep)
+                guard let data = rep.representation(using: .png, properties: [:]) else { exit(3) }
+                do { try data.write(to: directory.appendingPathComponent("window.png")); print("UI_SMOKE_OK \(Int(view.bounds.width))x\(Int(view.bounds.height))"); exit(0) } catch { exit(4) }
+            }
+        } catch { fputs("UI smoke fixture failed\n", stderr); exit(1) }
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -96,7 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         let tableScroll = NSScrollView(); tableScroll.documentView = table; tableScroll.hasVerticalScroller = true; split.addArrangedSubview(tableScroll)
         let detail = NSStackView(); detail.orientation = .vertical; detail.alignment = .leading; detail.spacing = 9; detail.edgeInsets = NSEdgeInsets(top: 0, left: 12, bottom: 0, right: 0)
         detail.addArrangedSubview(cardInfo)
-        transcriptEditor.isRichText = false; transcriptEditor.font = .systemFont(ofSize: 15); transcriptEditor.isVerticallyResizable = true
+        transcriptEditor.delegate = self; transcriptEditor.isRichText = false; transcriptEditor.font = .systemFont(ofSize: 15); transcriptEditor.isVerticallyResizable = true
         let textScroll = NSScrollView(); textScroll.documentView = transcriptEditor; textScroll.hasVerticalScroller = true
         textScroll.heightAnchor.constraint(equalToConstant: 125).isActive = true; detail.addArrangedSubview(textScroll)
         startField.placeholderString = "起始秒，可空"; endField.placeholderString = "结束秒，可空"
@@ -168,7 +194,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                 if duration.isFinite { self.project?.recording?.durationSeconds = duration }
                 self.project?.captureState = .complete
                 if self.project?.reviewCards.isEmpty == true {
-                    self.project?.reviewCards = self.project?.anchors.map { ReviewCard(text: "", frameIDs: [$0.id], startSeconds: $0.timestamp, endSeconds: $0.timestamp) } ?? []
+                    let placeholders = self.project?.anchors.map { ReviewCard(text: "", frameIDs: [$0.id], startSeconds: $0.timestamp, endSeconds: $0.timestamp) } ?? []
+                    self.project?.reviewCards = placeholders
                 }
                 do { try self.persist() } catch { self.fail(error) }
                 self.setBusy(false, status: "录制已保存在本地。输入 API Key 后可转写；也可直接添加文字并导出。"); self.refresh()
@@ -178,6 +205,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     }
     private func recordingFailed(_ error: Error) {
         timer?.invalidate(); timer = nil; drawing?.cancel(); drawing = nil; toolbar.orderOut(nil); window.makeKeyAndOrderFront(nil)
+        project?.recording?.durationSeconds = recorder.elapsedSeconds
         project?.captureState = .interrupted; try? persist(); setBusy(false, status: "录制中断。已写入的文件保留在项目文件夹，可尝试重新打开。"); fail(error)
     }
     @objc private func mark() { captureAnchor(draw: false) }
@@ -193,7 +221,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                 if draw, let screen = self.screens.first(where: { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == self.selectedDisplay }) {
                     self.drawing = DrawingOverlay(image: visual.image, screen: screen) { [weak self] result in
                         guard let self = self else { return }; self.drawing = nil
-                        do { if let image = try result.get() { try self.addAnchor(image: image, timestamp: timestamp, kind: .pen, pointer: visual.pointer, store: store) } } catch { self.fail(error) }
+                        do { if let image = try result.get() { try self.addAnchor(image: image, timestamp: timestamp, kind: .pen, pointer: visual.pointer, endTimestamp: max(timestamp, self.recorder.elapsedSeconds), store: store) } } catch { self.fail(error) }
                         if self.recorder.isRecording { self.toolbar.orderFrontRegardless() }
                     }; self.drawing?.show()
                 } else {
@@ -202,10 +230,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             } catch { self.toolbar.orderFrontRegardless(); self.fail(error) }
         }
     }
-    private func addAnchor(image: CGImage, timestamp: Double, kind: AnchorKind, pointer: NormalizedPoint? = nil, store: ProjectStore) throws {
+    private func addAnchor(image: CGImage, timestamp: Double, kind: AnchorKind, pointer: NormalizedPoint? = nil, endTimestamp: Double? = nil, store: ProjectStore) throws {
         let id = UUID(); let relative = "frames/\(id.uuidString).png"
         try VisualCapture.save(image, to: try store.resolveRelativePath(relative, requireExisting: false), pointer: kind == .bookmark ? pointer : nil)
-        project?.anchors.append(VisualAnchor(id: id, timestamp: timestamp, imageRelativePath: relative, kind: kind, pointer: pointer)); try persist()
+        project?.anchors.append(VisualAnchor(id: id, timestamp: timestamp, imageRelativePath: relative, kind: kind, pointer: pointer, endTimestamp: endTimestamp)); try persist()
     }
 
     @objc private func openProject() {
@@ -264,6 +292,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     }
     @objc private func cancelASR() { cancelRequested = true; asrTask?.cancel(); if asrTask == nil { report("将在当前本地步骤结束后取消；已完成的音频片段保留。") } }
     private func finishASR(cancelled: Bool) {
+        let completed = project?.asrChunks.sorted(by: { $0.index < $1.index }).flatMap { $0.sentences } ?? []
+        project?.transcripts = completed
+        let existing = Set(project?.reviewCards.compactMap { $0.transcriptID } ?? [])
+        let partialCards = FrameMatcher.suggestCards(for: completed.filter { !existing.contains($0.id) }, anchors: project?.anchors ?? [])
+        project?.reviewCards.append(contentsOf: partialCards)
         project?.captureState = .complete; try? persist(); cancelASRButton.isEnabled = false; setBusy(false, status: cancelled ? "转写已取消。已完成的片段保留，下次会继续未完成片段。" : "转写处理已停止。请检查片段状态；重试只发送未完成或失败的片段。"); refresh()
     }
     private func buildReviewFrames() {
@@ -277,8 +310,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             do {
                 let movie = try store.resolveRelativePath(recording.relativePath, requireExisting: true)
                 for segment in segments where segment.isTimed {
+                    if DispatchQueue.main.sync(execute: { self?.cancelRequested ?? true }) { break }
                     guard let start = segment.startSeconds, let end = segment.endSeconds else { continue }
-                    let count = max(1, min(12, Int(ceil((end - start) / 15))))
+                    let count = max(1, Int(min(12, ceil((end - start) / 15))))
                     for offset in 0..<count {
                         let timestamp = start + (end - start) * (Double(offset) + 0.5) / Double(count)
                         if snapshot.anchors.contains(where: { abs($0.timestamp - timestamp) < 1 }) { continue }
@@ -291,10 +325,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             } catch { warning = error.localizedDescription }
             DispatchQueue.main.async {
                 guard let self = self else { return }; self.project?.anchors.append(contentsOf: added)
+                if self.cancelRequested { self.finishASR(cancelled: true); return }
                 // Keep existing user-reviewed cards on retry; only append newly transcribed segments.
                 let existing = Set(self.project?.reviewCards.compactMap { $0.transcriptID } ?? [])
                 let suggested = FrameMatcher.suggestCards(for: segments.filter { !existing.contains($0.id) }, anchors: self.project?.anchors ?? [])
-                if existing.isEmpty { self.project?.reviewCards = suggested } else { self.project?.reviewCards.append(contentsOf: suggested) }
+                self.project?.reviewCards.removeAll { $0.transcriptID == nil && $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                self.project?.reviewCards.append(contentsOf: suggested)
                 self.project?.captureState = .complete; do { try self.persist() } catch { self.fail(error) }
                 self.cancelASRButton.isEnabled = false; self.setBusy(false, status: warning.map { "转写完成，但部分截图失败：\($0)。请手动取图后导出。" } ?? "转写与配图已准备好。请校对文字、时间和图片，再导出。无时间戳的句子需要手动配图。")
                 self.refresh(); if !(self.project?.reviewCards.isEmpty ?? true) { self.table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false) }
@@ -302,6 +338,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         }
     }
 
+    func textDidChange(_ notification: Notification) {
+        guard !busy, let index = cardIndex else { return }
+        project?.reviewCards[index].text = transcriptEditor.string
+        do { try persist() } catch { report("保存文字失败：\(error.localizedDescription)") }
+    }
     func numberOfRows(in tableView: NSTableView) -> Int { project?.reviewCards.count ?? 0 }
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
         guard let card = project?.reviewCards[row] else { return nil }
@@ -352,7 +393,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         let panel = NSSavePanel(); panel.title = bundle ? "保存图片与 Markdown 文件夹" : "保存独立 HTML"; panel.nameFieldStringValue = bundle ? "Point-and-Tell-export" : "Point-and-Tell.html"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do {
-            let result = try bundle ? ProjectExporter.exportBundle(project: project, store: store, to: url) : ProjectExporter.exportHTML(project: project, store: store, to: url)
+            let result: ExportResult
+            if bundle { result = try ProjectExporter.exportBundle(project: project, store: store, to: url) }
+            else { result = try ProjectExporter.exportHTML(project: project, store: store, to: url) }
             report(result.warnings.isEmpty ? "导出成功。HTML 可离线打开；给模型使用时，图片 + Markdown 包更稳妥。" : "导出完成，有 \(result.warnings.count) 条图片警告，请检查导出内容。")
             NSWorkspace.shared.activateFileViewerSelecting([result.outputURL])
         } catch { fail(error) }

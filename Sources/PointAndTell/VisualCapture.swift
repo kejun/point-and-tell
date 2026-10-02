@@ -31,7 +31,16 @@ enum VisualCapture {
             context.strokeEllipse(in: CGRect(x: x - radius, y: y - radius, width: 2 * radius, height: 2 * radius))
             output = context.makeImage() ?? image
         } else { output = image }
-        let rep = NSBitmapImageRep(cgImage: output)
+        // Bound on-disk image dimensions after baking annotations, while keeping
+        // pointer/pen geometry derived from the original Retina screenshot.
+        let scale = min(1.0, min(1920.0 / Double(output.width), 1080.0 / Double(output.height)))
+        var bounded = output
+        if scale < 1, let context = CGContext(data: nil, width: max(1, Int(Double(output.width) * scale)), height: max(1, Int(Double(output.height) * scale)), bitsPerComponent: 8, bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) {
+            context.interpolationQuality = .high
+            context.draw(output, in: CGRect(x: 0, y: 0, width: context.width, height: context.height))
+            bounded = context.makeImage() ?? output
+        }
+        let rep = NSBitmapImageRep(cgImage: bounded)
         guard let png = rep.representation(using: .png, properties: [:]) else {
             throw NSError(domain: "PointAndTell", code: 21, userInfo: [NSLocalizedDescriptionKey: "无法编码截图"])
         }
@@ -42,7 +51,7 @@ enum VisualCapture {
         let generator = AVAssetImageGenerator(asset: AVURLAsset(url: url))
         generator.appliesPreferredTrackTransform = true
         generator.maximumSize = CGSize(width: 1920, height: 1080)
-        generator.requestedTimeToleranceBefore = .zero
+        generator.requestedTimeToleranceBefore = CMTime(seconds: 0.25, preferredTimescale: 600)
         generator.requestedTimeToleranceAfter = CMTime(seconds: 0.25, preferredTimescale: 600)
         var actual = CMTime.zero
         let image = try generator.copyCGImage(at: CMTime(seconds: max(0, seconds), preferredTimescale: 600), actualTime: &actual)

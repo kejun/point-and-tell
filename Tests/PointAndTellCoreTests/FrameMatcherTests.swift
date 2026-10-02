@@ -61,4 +61,22 @@ final class FrameMatcherTests: XCTestCase {
         XCTAssertEqual(cards[0].frameIDs, [anchor.id])
         XCTAssertEqual(cards[0].startSeconds, 1)
     }
+
+    func testActivePenIntervalOverlapsSpeechAfterScreenshotTime() {
+        let segment = TranscriptSegment(text: "Speech while drawing", startSeconds: 20, endSeconds: 30)
+        let pen = VisualAnchor(timestamp: 10, imageRelativePath: "pen.png", kind: .pen, endTimestamp: 28)
+        let frame = VisualAnchor(timestamp: 25, imageRelativePath: "frame.png")
+        XCTAssertEqual(FrameMatcher.matchingFrameIDs(for: segment, anchors: [frame, pen]), [pen.id])
+    }
+
+    func testNonOverlappingPenIntervalIsExcludedAndLongSelectionIsDeduplicated() {
+        let segment = TranscriptSegment(text: "Later speech", startSeconds: 20, endSeconds: 80)
+        let earlier = VisualAnchor(timestamp: 10, imageRelativePath: "earlier.png", kind: .pen, endTimestamp: 19.9)
+        XCTAssertTrue(FrameMatcher.matchingFrameIDs(for: segment, anchors: [earlier]).isEmpty)
+        let active = VisualAnchor(timestamp: 10, imageRelativePath: "active.png", kind: .pen, endTimestamp: 80)
+        let frames = [40.0, 55, 70].map { VisualAnchor(timestamp: $0, imageRelativePath: "\($0).png") }
+        let selected = FrameMatcher.matchingFrameIDs(for: segment, anchors: [active] + frames)
+        XCTAssertEqual(selected, [active.id] + frames.map(\.id))
+        XCTAssertEqual(Set(selected).count, selected.count)
+    }
 }

@@ -48,8 +48,9 @@ final class RecordingEngine: NSObject {
         let lastError: String?
     }
 
-    /// Configure callbacks on main, before start. onFailure also reports an
-    /// interruption when AVFoundation successfully finalized a recoverable movie.
+    /// Configure callbacks on main, before start. onFailure is ONLY for an
+    /// unexpected interruption with no start/stop completion to handle it. A
+    /// recoverable movie may still have been finalized after that interruption.
     var onFailure: ((Error) -> Void)?
     var onRecordingFinished: ((Result<URL, Error>) -> Void)?
 
@@ -232,49 +233,43 @@ final class RecordingEngine: NSObject {
             throw EngineError.cannotConfigure("movie output is unavailable")
         }
         captureSession.addOutput(movie)
-        // .inputPriority avoids a 16:9 preset cropping/stretching a 16:10 display.
-        if captureSession.canSetSessionPreset(.inputPriority) { captureSession.sessionPreset = .inputPriority }
+        // macOS does not provide the iOS-only .inputPriority preset or movie
+        // codec/settings discovery methods. Use its generic quality preset and
+        // supply explicit macOS video/audio dictionaries below. No fixed 16:9
+        // capture preset is selected; ResizeAspect preserves the whole display.
+        if captureSession.canSetSessionPreset(.high) { captureSession.sessionPreset = .high }
         movie.movieFragmentInterval = CMTime(seconds: 2, preferredTimescale: 600)
         movie.minFreeDiskSpaceLimit = 128 * 1_024 * 1_024 // reserve space for finalization + project metadata
-        guard let video = movie.connection(with: .video), let audio = movie.connection(with: .audio),
-              movie.availableVideoCodecTypes.contains(.h264) else {
+        guard let video = movie.connection(with: .video), let audio = movie.connection(with: .audio) else {
             captureSession.commitConfiguration()
-            throw EngineError.cannotConfigure("H.264 video and microphone connections are required")
+            throw EngineError.cannotConfigure("video and microphone connections are required")
         }
-        let videoKeys = Set(movie.supportedOutputSettingsKeys(for: video))
-        var videoSettings: [String: Any] = [AVVideoCodecKey: AVVideoCodecType.h264]
-        if videoKeys.contains(AVVideoWidthKey), videoKeys.contains(AVVideoHeightKey) {
-            videoSettings[AVVideoWidthKey] = width
-            videoSettings[AVVideoHeightKey] = height
-        }
-        if videoKeys.contains(AVVideoScalingModeKey) {
-            videoSettings[AVVideoScalingModeKey] = AVVideoScalingModeResizeAspect
-        }
-        if videoKeys.contains(AVVideoCompressionPropertiesKey) {
-            videoSettings[AVVideoCompressionPropertiesKey] = [
+        // setOutputSettings(_:for:) accepts video/audio encoding settings on
+        // macOS. supportedOutputSettingsKeys and availableVideoCodecTypes on
+        // AVCaptureMovieFileOutput are iOS-only and must not be queried here.
+        let videoSettings: [String: Any] = [
+            AVVideoCodecKey: AVVideoCodecType.h264,
+            AVVideoWidthKey: width,
+            AVVideoHeightKey: height,
+            AVVideoScalingModeKey: AVVideoScalingModeResizeAspect,
+            AVVideoCompressionPropertiesKey: [
                 AVVideoAverageBitRateKey: requestedFPS == 10 ? 3_000_000 : 2_000_000,
                 AVVideoExpectedSourceFrameRateKey: requestedFPS,
                 AVVideoMaxKeyFrameIntervalKey: requestedFPS * 2,
                 AVVideoAllowFrameReorderingKey: false
-            ]
-        }
-        encoderDescription = "H.264, system-selected encoder (hardware use is not exposed)"
-        if videoKeys.contains(AVVideoEncoderSpecificationKey) {
-            videoSettings[AVVideoEncoderSpecificationKey] = [
+            ],
+            AVVideoEncoderSpecificationKey: [
                 kVTVideoEncoderSpecification_EnableHardwareAcceleratedVideoEncoder as String: true
             ]
-            encoderDescription = "H.264, hardware acceleration preferred (not measured)"
-        }
+        ]
+        encoderDescription = "H.264, hardware acceleration preferred (not measured)"
         movie.setOutputSettings(videoSettings, for: video)
-        let audioKeys = Set(movie.supportedOutputSettingsKeys(for: audio))
-        let wantedAudio: [String: Any] = [AVFormatIDKey: kAudioFormatMPEG4AAC,
-            AVSampleRateKey: 44_100, AVNumberOfChannelsKey: 1, AVEncoderBitRateKey: 64_000]
-        let audioSettings = wantedAudio.filter { audioKeys.contains($0.key) }
-        guard audioSettings[AVFormatIDKey] != nil else {
-            captureSession.commitConfiguration()
-            throw EngineError.cannotConfigure("AAC microphone encoding is unavailable")
-        }
-        movie.setOutputSettings(audioSettings, for: audio)
+        movie.setOutputSettings([
+            AVFormatIDKey: kAudioFormatMPEG4AAC,
+            AVSampleRateKey: 44_100,
+            AVNumberOfChannelsKey: 1,
+            AVEncoderBitRateKey: 64_000
+        ], for: audio)
         captureSession.commitConfiguration()
         session = captureSession
         output = movie
@@ -338,10 +333,7 @@ final class RecordingEngine: NSObject {
     }
 
     private func failBeforeStart(_ error: Error) {
-        let callback = startCompletion
-        startCompletion = nil
         finish(result: .failure(error), failure: error, notifyFinished: false)
-        if let callback = callback { deliver { callback(.failure(error)) } }
     }
 
     private func finish(result: Result<URL, Error>, failure: Error?, notifyFinished: Bool = true) {
@@ -361,9 +353,12 @@ final class RecordingEngine: NSObject {
         startCompletion = nil
         let stops = stopCompletions
         stopCompletions.removeAll()
+        // Start/Stop own their errors. Without this routing, a denied permission
+        // or failed stop would produce two identical alerts in the app.
+        let notifyFailure = starts == nil && stops.isEmpty
         deliver {
             if let starts = starts { starts(.failure(failure ?? EngineError.cancelled)) }
-            if let failure = failure { self.onFailure?(failure) }
+            if notifyFailure, let failure = failure { self.onFailure?(failure) }
             for completion in stops { completion(result) }
             if notifyFinished { self.onRecordingFinished?(result) }
         }

@@ -1,6 +1,9 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
+VERSION="$(tr -d '[:space:]' < VERSION)"
+PLIST_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' Resources/Info.plist)"
+[[ "$VERSION" == "$PLIST_VERSION" ]] || { echo "Version mismatch" >&2; exit 1; }
 export MACOSX_DEPLOYMENT_TARGET=11.0
 ARCH="${ARCH:-x86_64}"
 swift build -c release --arch "$ARCH"
