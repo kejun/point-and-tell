@@ -6,7 +6,7 @@ Record your screen while explaining what should change. Mark the important momen
 
 **New in v0.2.0:** a native sidebar workspace, clearer card editing and the new app icon. See [UI design and screenshots](docs/UI-DESIGN.md).
 
-![Native review workspace](docs/screenshots/review-light.png)
+<img src="docs/screenshots/review-light.png" width=600>
 
 **Native macOS 11+, Intel + Apple Silicon. Preview v0.2.0.** No Electron, local language model, account, server, or database.
 
