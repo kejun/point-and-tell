@@ -49,10 +49,12 @@ public enum ASRRequestBuilder {
         request.timeoutInterval = 180
         request.setValue("Bearer \(key)", forHTTPHeaderField: "Authorization")
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-        // Match the Qwen-Audio-3.0 model page's final-result request at every
-        // duration. A long recording must not silently switch response modes.
-        request.setValue("disable", forHTTPHeaderField: "X-DashScope-SSE")
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        // Qwen 3.0 publishes every final sentence's word timestamps in SSE for
+        // audio >= 60 seconds. Non-streaming output.sentence may only describe
+        // the last sentence, so disabling SSE loses the earlier timeline.
+        let streamedTimeline = audio.durationSeconds >= 60
+        request.setValue(streamedTimeline ? "enable" : "disable", forHTTPHeaderField: "X-DashScope-SSE")
+        request.setValue(streamedTimeline ? "text/event-stream, application/json" : "application/json", forHTTPHeaderField: "Accept")
         do { request.httpBody = try JSONSerialization.data(withJSONObject: body, options: [.sortedKeys]) }
         catch { throw ASRError.requestEncoding }
         return request

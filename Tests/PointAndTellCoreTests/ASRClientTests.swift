@@ -20,11 +20,11 @@ final class ASRClientTests: XCTestCase {
         XCTAssertFalse(ASRProvider.integrationVerified)
     }
 
-    func testFinalJSONIsRequestedForShortAndLongAudio() throws {
+    func testQwenTimelineModeMatchesDocumentedDurationBoundary() throws {
         for seconds in [1, 59, 60, 180] {
             let request = try ASRRequestBuilder.makeRequest(wav: ASRFixtures.wav(seconds: seconds), apiKey: "offline-test-key")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "X-DashScope-SSE"), "disable")
-            XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), "application/json")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "X-DashScope-SSE"), seconds >= 60 ? "enable" : "disable")
+            XCTAssertEqual(request.value(forHTTPHeaderField: "Accept"), seconds >= 60 ? "text/event-stream, application/json" : "application/json")
             let body = try JSONSerialization.jsonObject(with: request.httpBody!) as! [String: Any]
             XCTAssertEqual(body["model"] as? String, "qwen-audio-3.0-asr-flash")
             XCTAssertNil(body["stream"])

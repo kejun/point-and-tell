@@ -42,7 +42,7 @@ Projects can be reopened with **打开项目…**. Completed transcription chunk
 - Local recording and screenshot processing. No telemetry
 - First-run setup asks for consent to automatic audio uploads after each new recording; ASR may incur the provider’s normal usage charges
 - Adapter target: `https://maas.qianwenaiapi.com/api/v1/services/aigc/multimodal-generation/generation`, model `qwen-audio-3.0-asr-flash`
-- Model request reference: [Qwen-Audio-3.0-ASR-Flash](https://www.qianwenai.com/models/qwen-audio-3.0-asr-flash); always final JSON (`X-DashScope-SSE: disable`), including long chunks.
+- Model request reference: [Qwen-Audio-3.0-ASR-Flash](https://www.qianwenai.com/models/qwen-audio-3.0-asr-flash); final JSON for short audio; finalized sentence/word SSE events for audio ≥60 seconds, with complete-timeline validation.
 - Response protocol reference: [Alibaba Cloud recorded-speech recognition HTTP API](https://help.aliyun.com/en/model-studio/fun-asr-flash-recorded-speech-recognition-http-api)
 - Provider docs currently describe workspace-specific domains; the requested MAAS endpoint/model are implemented but **not verified by a real paid API request**. Offline fixture tests are not a claim of provider acceptance
 - Export contains only selected images and edited cards. Credentials, raw recordings, local absolute paths and ASR diagnostics are excluded
