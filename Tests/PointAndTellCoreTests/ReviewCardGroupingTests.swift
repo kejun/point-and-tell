@@ -95,7 +95,7 @@ final class ReviewCardGroupingTests: XCTestCase {
         let cards = ReviewCardGrouping.cards(from: card, transcript: source, anchors: anchors)
         XCTAssertEqual(cards.count, 2)
         XCTAssertEqual(cards[0].text, ""); XCTAssertNil(cards[0].startSeconds)
-        XCTAssertEqual(cards[1].frameIDs, [anchors[1].id, anchors[2].id])
+        XCTAssertEqual(cards[1].frameIDs, expected[1].imageIDs)
         XCTAssertEqual(cards.flatMap { TranscriptAlignment.moments(card: $0, transcript: source, anchors: anchors) }, expected)
     }
 }
