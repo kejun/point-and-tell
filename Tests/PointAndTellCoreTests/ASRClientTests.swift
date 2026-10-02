@@ -1,0 +1,179 @@
+import Foundation
+#if canImport(FoundationNetworking)
+import FoundationNetworking
+#endif
+import XCTest
+@testable import PointAndTellCore
+
+final class ASRClientTests: XCTestCase {
+    func testRequestMatchesAudioOnlyFixture() throws {
+        let request = try ASRRequestBuilder.makeRequest(wav: ASRFixtures.tinyWAV, apiKey: "offline-test-key")
+        XCTAssertEqual(request.url, ASRProvider.endpoint)
+        XCTAssertEqual(request.url?.absoluteString, "https://maas.qianwenaiapi.com/api/v1/services/aigc/multimodal-generation/generation")
+        XCTAssertEqual(request.httpMethod, "POST")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Authorization"), "Bearer offline-test-key")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "Content-Type"), "application/json")
+        XCTAssertEqual(request.value(forHTTPHeaderField: "X-DashScope-SSE"), "disable")
+        let actual = try XCTUnwrap(try JSONSerialization.jsonObject(with: XCTUnwrap(request.httpBody)) as? NSDictionary)
+        let expected = try XCTUnwrap(try JSONSerialization.jsonObject(with: Data(ASRFixtures.request.utf8)) as? NSDictionary)
+        XCTAssertEqual(actual, expected)
+        XCTAssertFalse(ASRProvider.integrationVerified)
+    }
+
+    func testSSEEnabledAtExactlyOneMinute() throws {
+        let below = try ASRRequestBuilder.makeRequest(wav: ASRFixtures.wav(seconds: 59), apiKey: "offline-test-key")
+        let at = try ASRRequestBuilder.makeRequest(wav: ASRFixtures.wav(seconds: 60), apiKey: "offline-test-key")
+        XCTAssertEqual(below.value(forHTTPHeaderField: "X-DashScope-SSE"), "disable")
+        XCTAssertEqual(at.value(forHTTPHeaderField: "X-DashScope-SSE"), "enable")
+    }
+
+    func testEmptyAndHeaderInjectionKeysRejected() {
+        XCTAssertThrowsError(try ASRRequestBuilder.makeRequest(wav: ASRFixtures.tinyWAV, apiKey: "   ")) {
+            XCTAssertEqual($0 as? ASRError, .missingAPIKey)
+        }
+        XCTAssertThrowsError(try ASRRequestBuilder.makeRequest(wav: ASRFixtures.tinyWAV, apiKey: "key\r\nX-Other: injected")) {
+            XCTAssertEqual($0 as? ASRError, .invalidAPIKey)
+        }
+    }
+
+    func testStubTransportSuccessAndMainQueueCompletion() {
+        let transport = ASRStubTransport()
+        transport.response = .success(ASRHTTPResponse(statusCode: 200, data: Data(ASRFixtures.json.utf8), contentType: "application/json"))
+        let finished = expectation(description: "complete")
+        let client = ASRClient(transport: transport)
+        client.transcribe(wav: ASRFixtures.tinyWAV, apiKey: "offline-test-key") { result in
+            XCTAssertTrue(Thread.isMainThread)
+            switch result {
+            case .success(let sentences): XCTAssertEqual(sentences.first?.text, "Hello world.")
+            case .failure(let error): XCTFail("Unexpected error: \(error)")
+            }
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 2)
+        XCTAssertEqual(transport.requests.count, 1)
+    }
+
+    func testSSEThroughStubTransport() {
+        let transport = ASRStubTransport()
+        transport.response = .success(ASRHTTPResponse(statusCode: 200, data: Data(ASRFixtures.sse.utf8), contentType: "text/event-stream"))
+        let finished = expectation(description: "complete")
+        ASRClient(transport: transport).transcribe(wav: ASRFixtures.tinyWAV, apiKey: "offline-test-key") { result in
+            XCTAssertEqual(try? result.get().map(\.text), ["First.", "第二句。"])
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 2)
+    }
+
+    func testInvalidAudioNeverReachesTransport() {
+        let transport = ASRStubTransport()
+        let finished = expectation(description: "validation complete")
+        ASRClient(transport: transport).transcribe(wav: Data(), apiKey: "offline-test-key") { result in
+            if case .success = result { XCTFail("Invalid audio was accepted") }
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 2)
+        XCTAssertTrue(transport.requests.isEmpty)
+    }
+
+    func testOversizedEncodedAudioNeverReachesTransport() {
+        let transport = ASRStubTransport()
+        let finished = expectation(description: "size validation")
+        ASRClient(transport: transport).transcribe(wav: ASRFixtures.wav(seconds: 240), apiKey: "offline-test-key") { result in
+            if case .failure(let error) = result { XCTAssertEqual(error as? ASRError, .encodedAudioTooLarge) }
+            else { XCTFail("Oversized audio was accepted") }
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 2)
+        XCTAssertTrue(transport.requests.isEmpty)
+    }
+
+    func testHTTPFailureIsNotParsedAsSuccessOrRetried() {
+        let transport = ASRStubTransport()
+        transport.response = .success(ASRHTTPResponse(statusCode: 401, data: Data(ASRFixtures.providerError.utf8)))
+        let finished = expectation(description: "failure")
+        ASRClient(transport: transport).transcribe(wav: ASRFixtures.tinyWAV, apiKey: "offline-test-key") { result in
+            switch result {
+            case .success: XCTFail("Unauthorized response accepted")
+            case .failure(let error):
+                XCTAssertEqual(error as? ASRError, .httpStatus(401, code: "InvalidApiKey", requestID: "fixture-error"))
+                XCTAssertFalse(error.localizedDescription.contains("offline-test-key"))
+                XCTAssertFalse(error.localizedDescription.contains("Provider detail"))
+            }
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 2)
+        XCTAssertEqual(transport.requests.count, 1)
+    }
+
+    func testTransportFailurePropagatesWithoutRetry() {
+        let transport = ASRStubTransport()
+        transport.response = .failure(URLError(.timedOut))
+        let finished = expectation(description: "timeout")
+        ASRClient(transport: transport).transcribe(wav: ASRFixtures.tinyWAV, apiKey: "offline-test-key") { result in
+            if case .failure(let error) = result { XCTAssertEqual((error as? URLError)?.code, .timedOut) }
+            else { XCTFail("Timeout accepted as success") }
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 2)
+        XCTAssertEqual(transport.requests.count, 1)
+    }
+
+    func testCancellationCompletesExactlyOnceAndCancelsUnderlyingTask() {
+        let transport = ASRStubTransport()
+        let client = ASRClient(transport: transport)
+        let cancelled = expectation(description: "cancelled")
+        let duplicated = expectation(description: "must not complete twice")
+        duplicated.isInverted = true
+        var completionCount = 0
+        let handle = client.transcribe(wav: ASRFixtures.tinyWAV, apiKey: "offline-test-key") { result in
+            completionCount += 1
+            if completionCount > 1 { duplicated.fulfill(); return }
+            if case .failure(let error) = result { XCTAssertEqual((error as? URLError)?.code, .cancelled) }
+            else { XCTFail("Cancellation reported success") }
+            cancelled.fulfill()
+        }
+        handle.cancel()
+        handle.cancel()
+        transport.finish(.success(ASRHTTPResponse(statusCode: 200, data: Data(ASRFixtures.json.utf8))))
+        wait(for: [cancelled, duplicated], timeout: 0.2)
+        XCTAssertEqual(transport.handle.cancelCount, 1)
+        XCTAssertEqual(completionCount, 1)
+    }
+
+    func testDuplicateTransportCallbacksCompleteOnlyOnce() {
+        let transport = ASRStubTransport()
+        let client = ASRClient(transport: transport)
+        let finished = expectation(description: "complete")
+        let duplicated = expectation(description: "must not complete twice")
+        duplicated.isInverted = true
+        var count = 0
+        client.transcribe(wav: ASRFixtures.tinyWAV, apiKey: "offline-test-key") { _ in
+            count += 1
+            if count == 1 { finished.fulfill() } else { duplicated.fulfill() }
+        }
+        let response = ASRHTTPResponse(statusCode: 200, data: Data(ASRFixtures.json.utf8))
+        transport.finish(.success(response)); transport.finish(.success(response))
+        wait(for: [finished, duplicated], timeout: 0.2)
+        XCTAssertEqual(count, 1)
+    }
+}
+
+private final class ASRStubHandle: ASRCancellable {
+    private(set) var cancelCount = 0
+    func cancel() { cancelCount += 1 }
+}
+
+private final class ASRStubTransport: ASRTransport {
+    let handle = ASRStubHandle()
+    var response: Result<ASRHTTPResponse, Error>?
+    private(set) var requests: [URLRequest] = []
+    private var completion: ((Result<ASRHTTPResponse, Error>) -> Void)?
+    func send(_ request: URLRequest,
+              completion: @escaping (Result<ASRHTTPResponse, Error>) -> Void) -> ASRCancellable {
+        requests.append(request)
+        self.completion = completion
+        if let response = response { completion(response) }
+        return handle
+    }
+    func finish(_ result: Result<ASRHTTPResponse, Error>) { completion?(result) }
+}

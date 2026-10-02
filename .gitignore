@@ -1,0 +1,9 @@
+.build/
+.swiftpm/
+.DS_Store
+build/
+dist/
+*.pointtell/
+*.mov
+*.wav
+.env*
