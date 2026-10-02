@@ -1,5 +1,19 @@
 # Download Point & Tell
 
+## v0.3.1 · Matching review cards and reliable pen input · Universal · macOS 11.0+
+
+[Download v0.3.1](v0.3.1/Point-and-Tell-v0.3.1-macOS-universal.zip?raw=true)
+
+Transcription now produces editable cards matching the word-timed text/image groups in HTML and Markdown. Opening an unchanged older project applies the same grouping without another API request. Text/whitespace, timing and screenshot choices survive; manually edited passages are preserved.
+
+Pen mode uses its own key-capable nonactivating input panel so the first click and drag draw on the canvas while the recording toolbar stays frontmost. Undo, Clear, Save/Enter and Cancel/Escape remain available. Choosing a screenshot now immediately assigns/replaces it and saves the card; the extra Add/Replace buttons are removed.
+
+- Intel x86_64 + Apple Silicon arm64; minimum macOS 11.0
+- [Exact source commit](https://github.com/kejun/point-and-tell/commit/bb5cfd08254ef6c5827fdbf8ebd5c7e735ddfe29) · [native build/test run](https://github.com/kejun/point-and-tell/actions/runs/37015846946)
+- 137 core tests per architecture; native window-dispatched pen strokes and saved PNG pixel checks; immediate image-selection persistence; setup/HUD/audio/UI checks; desktop/390px WebKit verification of matching card groups
+- [SHA-256](v0.3.1/Point-and-Tell-v0.3.1-macOS-universal.zip.sha256) · [build manifest](v0.3.1/build.json) · [behavior and regression coverage](../docs/CARDS-AND-PEN.md)
+- Ad-hoc signed, not Apple-notarized. Physical-device macOS 11 permission/full-screen behavior and real paid ASR alignment still need device verification.
+
 ## v0.3.0 · Ready-to-record workflow · Universal · macOS 11.0+
 
 [Download v0.3.0](v0.3.0/Point-and-Tell-v0.3.0-macOS-universal.zip?raw=true)
