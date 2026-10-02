@@ -28,7 +28,7 @@ enum InterfaceStyle {
     }
     static func column(_ views: [NSView], spacing: CGFloat = 8) -> NSStackView {
         let stack = NSStackView(views: views)
-        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = spacing
+        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = spacing; stack.distribution = .fill
         for view in views {
             view.translatesAutoresizingMaskIntoConstraints = false
             view.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true

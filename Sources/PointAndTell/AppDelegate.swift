@@ -288,6 +288,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         review.translatesAutoresizingMaskIntoConstraints = false; reviewContainer.addSubview(review)
         NSLayoutConstraint.activate([review.leadingAnchor.constraint(equalTo: reviewContainer.leadingAnchor), review.trailingAnchor.constraint(equalTo: reviewContainer.trailingAnchor), review.topAnchor.constraint(equalTo: reviewContainer.topAnchor), review.bottomAnchor.constraint(equalTo: reviewContainer.bottomAnchor)])
         reviewContent = review
+        reviewContainer.heightAnchor.constraint(greaterThanOrEqualToConstant: 340).isActive = true
         makeEmptyState(in: reviewContainer)
 
         statusLabel.font = .systemFont(ofSize: 11); statusLabel.textColor = .secondaryLabelColor
@@ -435,7 +436,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         apiKeyField.isEnabled = !busy; screenPicker.isEnabled = !busy; fpsPicker.isEnabled = !busy; microphonePicker.isEnabled = !busy
         table.isEnabled = !busy
         exportPicker.isEnabled = actionEnabled(#selector(exportHTML))
-        cancelASRButton.isHidden = !busy || captureStateBeforeASR == nil
+        cancelASRButton.isHidden = !cancelASRButton.isEnabled
         transcribeButton.title = (project?.asrChunks.contains { $0.state == .failed || $0.state == .pending } ?? false) ? "继续 / 重试转写" : "开始转写"
         let count = project?.reviewCards.count ?? 0
         cardCount.stringValue = "卡片 · \(count)"
@@ -650,7 +651,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         guard !key.isEmpty else { report("请先输入本次转写使用的 API Key。密钥不会保存到项目、日志或导出文件。"); return }
         closePlayback(); cancelRequested = false; silenceUploadApproved = false
         captureStateBeforeASR = project?.captureState
-        setBusy(true, status: "音频检查：正在本地检查录音，尚未上传…"); cancelASRButton.isEnabled = true
+        cancelASRButton.isEnabled = true; setBusy(true, status: "音频检查：正在本地检查录音，尚未上传…")
         if project?.asrChunks.isEmpty == false {
             // Saved WAVs are checked individually. A damaged source MOV must
             // not discard a valid saved WAV retry.
