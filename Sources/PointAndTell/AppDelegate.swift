@@ -174,6 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             exportDemo.anchors.append(late); exportDemo.transcripts = [timed]
             exportDemo.reviewCards = [ReviewCard(transcriptID: timed.id, text: timed.text,
                 frameIDs: [anchor.id, late.id], startSeconds: timed.startSeconds, endSeconds: timed.endSeconds)]
+            exportDemo.groupReviewCards()
             try ProjectExporter.exportHTML(project: exportDemo, store: demoStore, to: directory.appendingPathComponent("timeline.html"))
             let bundleURL = directory.appendingPathComponent("timeline-bundle")
             if FileManager.default.fileExists(atPath: bundleURL.path) { try FileManager.default.removeItem(at: bundleURL) }
@@ -204,7 +205,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                           let icon = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
                           NSImage(contentsOf: icon) != nil else { exit(2) }
                     try self.verifySetupUI(directory: directory)
-                    self.window.makeFirstResponder(self.table)
+                    self.project = exportDemo; self.editingCardID = nil; self.refresh()
+                    guard self.table.numberOfRows == 2 else { exit(24) }
+                    for (index, card) in exportDemo.reviewCards.enumerated() {
+                        self.table.selectRowIndexes(IndexSet(integer: index), byExtendingSelection: false); self.loadCard()
+                        guard self.transcriptEditor.string == card.text, self.preview.image != nil,
+                              card.frameIDs.count == 1, card.isTimed else { exit(25) }
+                    }
+                    self.table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false); self.loadCard()
+                    try render("grouped-review", width: 1080, height: 760)
+                    try DrawingOverlay.verifyInteraction(directory: directory, toolbar: self.toolbar)
+                    self.project = demo; self.editingCardID = nil; self.refresh()
+                    self.window.makeKeyAndOrderFront(nil); self.window.makeFirstResponder(self.table)
                     try render("window", width: 1080, height: 760)
                     try render("review-dark-compact", width: 980, height: 680, dark: true)
                     self.project?.asrChunks = [ASRChunk(relativePath: "audio/legacy.wav", startSeconds: 0,
@@ -804,7 +816,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             guard self.recorder.isRecording else { return }
             do {
                 let visual = try VisualCapture.screen(displayID: self.selectedDisplay, belowWindowID: CGWindowID(self.toolbar.windowNumber)); let timestamp = self.recorder.elapsedSeconds
-                if draw, let screen = self.screens.first(where: { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == self.selectedDisplay }) {
+                if draw {
+                    guard let screen = NSScreen.screens.first(where: { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == self.selectedDisplay }) else {
+                        throw NSError(domain: "PointAndTell", code: 24, userInfo: [NSLocalizedDescriptionKey: "录制屏幕已断开，无法打开画笔。请结束录制并重新选择屏幕。"])
+                    }
                     self.drawing = DrawingOverlay(image: visual.image, screen: screen) { [weak self] result in
                         guard let self = self else { return }; self.drawing = nil
                         do { if let image = try result.get() { try self.addAnchor(image: image, timestamp: timestamp, kind: .pen, pointer: visual.pointer, endTimestamp: max(timestamp, self.recorder.elapsedSeconds), store: store) } } catch { self.fail(error) }
@@ -826,6 +841,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         guard !busy, commitTiming() else { return }; let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.title = "选择 .pointtell 项目文件夹"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do { let chosen = ProjectStore(folderURL: url); let loaded = try chosen.load(); closePlayback(); project = loaded; store = chosen; editingCardID = nil; timingDirty = false
+            if project?.groupReviewCards() == true { try persist() }
             if let recording = project?.recording, let movie = try? chosen.resolveRelativePath(recording.relativePath, requireExisting: true) {
                 let duration = AVURLAsset(url: movie).duration.seconds
                 if duration.isFinite && duration > 0 { project?.recording?.durationSeconds = duration; try persist() }
@@ -993,6 +1009,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         let existing = Set(project?.reviewCards.compactMap { $0.transcriptID } ?? [])
         let partialCards = FrameMatcher.suggestCards(for: completed.filter { !existing.contains($0.id) }, anchors: project?.anchors ?? [])
         project?.reviewCards.append(contentsOf: partialCards)
+        project?.groupReviewCards()
         if project?.captureState == .processing { project?.captureState = captureStateBeforeASR ?? .complete }
         try? persist(); cancelASRButton.isEnabled = false; setBusy(false, status: cancelled ? "转写已取消。已完成的片段保留，下次会继续未完成片段。" : "转写处理已停止。请检查片段状态；重试只发送未完成或失败的片段。"); refresh()
     }
@@ -1032,6 +1049,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                 let suggested = FrameMatcher.suggestCards(for: segments.filter { !existing.contains($0.id) }, anchors: self.project?.anchors ?? [])
                 self.project?.reviewCards.removeAll { $0.transcriptID == nil && $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
                 self.project?.reviewCards.append(contentsOf: suggested)
+                self.project?.groupReviewCards()
                 self.project?.captureState = self.captureStateBeforeASR ?? .complete; do { try self.persist() } catch { self.fail(error) }
                 self.automaticTranscription = false
                 self.cancelASRButton.isEnabled = false; self.setBusy(false, status: warning.map { "转写完成，但部分截图失败：\($0)。请手动取图后导出。" } ?? "转写与配图已准备好。请校对文字、时间和图片，再导出。无时间戳的句子需要手动配图。")

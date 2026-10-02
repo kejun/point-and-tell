@@ -4,7 +4,7 @@
 
 Record your screen while explaining what should change. Mark the important moments, draw on a frozen screenshot, then turn your explanation into editable text-and-image cards and an offline HTML file.
 
-**New in v0.3.0:** a required first-run setup for screen/microphone permissions and a Keychain-stored API key, automatic transcription after recording, complete Qwen sentence/word timestamp validation, and a persistent frontmost recording toolbar. See [setup and automatic workflow](docs/FIRST-RUN.md) and [ASR configuration](docs/QWEN-ASR.md).
+**New in v0.3.1:** the review workspace now creates the same timestamp-and-screenshot cards as the HTML export, including automatically regrouping unchanged older projects without re-uploading audio. Pen mode now uses a dedicated input panel for first-click drawing, drag strokes, undo/clear, Enter to save and Escape to cancel, while the recording toolbar stays visible. See [card and pen fixes](docs/CARDS-AND-PEN.md).
 
 <img src="docs/screenshots/review-light.png" width=600>
 

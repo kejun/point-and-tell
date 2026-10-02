@@ -70,6 +70,17 @@ final class DrawingCanvas: NSView {
     init(image: CGImage, frame: NSRect) { self.image = image; super.init(frame: frame) }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     override var acceptsFirstResponder: Bool { true }
+    override var needsPanelToBecomeKey: Bool { true }
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    var strokeCount: Int { strokes.count }
+    var onSave: (() -> Void)?
+    var onCancel: (() -> Void)?
+    override func resetCursorRects() { addCursorRect(bounds, cursor: .crosshair) }
+    override func keyDown(with event: NSEvent) {
+        if event.keyCode == 53 { onCancel?() }
+        else if event.keyCode == 36 || event.keyCode == 76 { onSave?() }
+        else { super.keyDown(with: event) }
+    }
     override func draw(_ dirtyRect: NSRect) {
         NSImage(cgImage: image, size: bounds.size).draw(in: bounds)
         NSColor.systemRed.setStroke()
@@ -105,8 +116,15 @@ final class DrawingCanvas: NSView {
     }
 }
 
+/// A regular borderless NSWindow cannot become key. Pen input needs its own
+/// key-capable nonactivating panel, independent of the non-key recording HUD.
+final class DrawingInputPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
 final class DrawingOverlay: NSObject {
-    private let window: NSWindow
+    private let window: DrawingInputPanel
     private let controls: NSPanel
     private let canvas: DrawingCanvas
     private let completion: (Result<CGImage?, Error>) -> Void
@@ -114,10 +132,15 @@ final class DrawingOverlay: NSObject {
     init(image: CGImage, screen: NSScreen, completion: @escaping (Result<CGImage?, Error>) -> Void) {
         self.completion = completion
         canvas = DrawingCanvas(image: image, frame: NSRect(origin: .zero, size: screen.frame.size))
-        window = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        window = DrawingInputPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         window.level = NSWindow.Level(rawValue: RecordingToolbarPanel.recordingLevel.rawValue - 2)
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         window.contentView = canvas
+        window.hidesOnDeactivate = false
+        window.canHide = false
+        window.becomesKeyOnlyIfNeeded = false
+        window.ignoresMouseEvents = false
+        window.acceptsMouseMovedEvents = true
         window.isReleasedWhenClosed = false
         controls = NSPanel(contentRect: NSRect(x: screen.frame.midX - 255, y: screen.frame.maxY - 82, width: 510, height: 54), styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
         controls.title = "标注冻结截图 · 语音继续录制"
@@ -125,18 +148,102 @@ final class DrawingOverlay: NSObject {
         controls.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary]
         controls.hidesOnDeactivate = false
         controls.canHide = false
+        controls.becomesKeyOnlyIfNeeded = true
         controls.isReleasedWhenClosed = false
         super.init()
         let row = NSStackView(views: [button("撤销", #selector(undo)), button("清空", #selector(clear)), button("保存并继续", #selector(done)), button("取消标注", #selector(cancel))])
         row.spacing = 10; row.orientation = .horizontal; row.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
         controls.contentView = row
+        canvas.onSave = { [weak self] in self?.done() }
+        canvas.onCancel = { [weak self] in self?.cancel() }
     }
     private func button(_ title: String, _ action: Selector) -> NSButton { NSButton(title: title, target: self, action: action) }
-    func show() { window.orderFrontRegardless(); controls.orderFrontRegardless() }
+    func show() {
+        window.makeKeyAndOrderFront(nil)
+        window.makeFirstResponder(canvas)
+        controls.orderFrontRegardless()
+    }
     @objc private func undo() { canvas.undoStroke() }
     @objc private func clear() { canvas.clearStrokes() }
     @objc func done() { do { finish(.success(try canvas.bakedImage())) } catch { finish(.failure(error)) } }
     @objc func cancel() { finish(.success(nil)) }
     private func finish(_ result: Result<CGImage?, Error>) { guard !finished else { return }; finished = true; controls.close(); window.close(); completion(result) }
+}
+
+extension DrawingOverlay {
+    /// Dispatch mouse events through AppKit's window routing, then exercise the
+    /// real controls and PNG baking. No capture, microphone or accessibility grant.
+    static func verifyInteraction(directory: URL, toolbar: RecordingToolbarPanel) throws {
+        func require(_ condition: @autoclosure () -> Bool, _ message: String) throws {
+            if !condition() { throw NSError(domain: "PointAndTell.PenSmoke", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: message]) }
+        }
+        guard let screen = NSScreen.main,
+              let context = CGContext(data: nil, width: 640, height: 360, bitsPerComponent: 8,
+                  bytesPerRow: 0, space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
+            throw NSError(domain: "PointAndTell.PenSmoke", code: 2)
+        }
+        context.setFillColor(NSColor.white.cgColor); context.fill(CGRect(x: 0, y: 0, width: 640, height: 360))
+        let image = context.makeImage()!
+        var saved: CGImage?; var completions = 0
+        let overlay = DrawingOverlay(image: image, screen: screen) { result in
+            completions += 1; saved = try? result.get()
+        }
+        toolbar.showForRecording(on: screen); overlay.show()
+        defer { overlay.cancel(); toolbar.hideAfterRecording() }
+        try require(overlay.window.canBecomeKey && overlay.window.isKeyWindow, "Pen panel did not become key")
+        try require(overlay.window.firstResponder === overlay.canvas && overlay.canvas.acceptsFirstMouse(for: nil), "Pen canvas does not receive the first stroke")
+        try require(toolbar.isVisible && toolbar.level.rawValue > overlay.controls.level.rawValue, "Recording controls disappeared behind pen mode")
+        func event(_ type: NSEvent.EventType, x: CGFloat, y: CGFloat) throws {
+            guard let event = NSEvent.mouseEvent(with: type, location: NSPoint(x: x, y: y),
+                modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: overlay.window.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1) else {
+                throw NSError(domain: "PointAndTell.PenSmoke", code: 3)
+            }
+            overlay.window.sendEvent(event)
+        }
+        func stroke() throws {
+            try event(.leftMouseDown, x: 200, y: 200)
+            try event(.leftMouseDragged, x: 350, y: 300)
+            try event(.leftMouseUp, x: 350, y: 300)
+        }
+        func click(_ title: String) throws {
+            guard let stack = overlay.controls.contentView as? NSStackView,
+                  let button = stack.arrangedSubviews.compactMap({ $0 as? NSButton }).first(where: { $0.title == title }) else {
+                throw NSError(domain: "PointAndTell.PenSmoke", code: 4)
+            }
+            button.performClick(nil)
+        }
+        try stroke(); try require(overlay.canvas.strokeCount == 1, "Mouse drag did not draw")
+        try click("撤销"); try require(overlay.canvas.strokeCount == 0, "Undo failed")
+        try stroke(); try click("清空"); try require(overlay.canvas.strokeCount == 0, "Clear failed")
+        try stroke(); try click("保存并继续"); overlay.done()
+        try require(completions == 1 && saved != nil, "Save must finish exactly once")
+        try require(!overlay.window.isVisible && !overlay.controls.isVisible && toolbar.isVisible, "Pen cleanup hid the recording HUD")
+        if let saved = saved {
+            let pixels = NSBitmapImageRep(cgImage: saved)
+            var redPixels = 0
+            for y in 0..<pixels.pixelsHigh { for x in 0..<pixels.pixelsWide {
+                if let color = pixels.colorAt(x: x, y: y)?.usingColorSpace(.deviceRGB),
+                   color.redComponent > 0.7 && color.greenComponent < 0.5 && color.blueComponent < 0.5 { redPixels += 1 }
+            } }
+            try require(redPixels > 20, "Saved PNG contains no drawn red stroke")
+            try VisualCapture.save(saved, to: directory.appendingPathComponent("pen-drawing.png"))
+        }
+        var cancelled = 0
+        let second = DrawingOverlay(image: image, screen: screen) { result in
+            if case .success(nil) = result { cancelled += 1 }
+        }
+        second.show()
+        if let escape = NSEvent.keyEvent(with: .keyDown, location: .zero, modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime, windowNumber: second.window.windowNumber,
+            context: nil, characters: "\u{1b}", charactersIgnoringModifiers: "\u{1b}", isARepeat: false, keyCode: 53) {
+            second.window.sendEvent(escape)
+        }
+        try require(cancelled == 1, "Escape did not reach the drawing canvas")
+        second.cancel()
+        try require(cancelled == 1 && !second.window.isVisible && toolbar.isVisible, "Cancel must finish once without hiding the HUD")
+        print("PEN_SMOKE_OK · window-dispatched first stroke/drag, undo, clear, saved PNG pixels, cancellation and HUD visibility")
+    }
 }
 #endif

@@ -24,9 +24,17 @@ public enum TranscriptAlignment {
                                 .reduce(into: [UUID]()) { if !$0.contains($1) { $0.append($1) } },
                               timingPrecision: precision)]
         }
+        if card.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, !selected.isEmpty {
+            return fallback("screenshot-only")
+        }
         guard card.isTimed else { return fallback("untimed") }
-        guard let transcript = transcript, transcript.text == card.text,
-              transcript.startSeconds == card.startSeconds, transcript.endSeconds == card.endSeconds else {
+        guard let transcript = transcript else { return fallback("manual") }
+        guard transcript.text == card.text, transcript.startSeconds == card.startSeconds,
+              transcript.endSeconds == card.endSeconds else {
+            // A generated card holds an exact word-timed excerpt. Do not call
+            // it an edit or split it again using its now shorter time interval:
+            // the selected snapshot may lie just outside those spoken words.
+            if isExactExcerpt(card: card, transcript: transcript) { return fallback("word") }
             return fallback("manual")
         }
         guard let words = transcript.words, !words.isEmpty, !selected.isEmpty,
@@ -64,6 +72,18 @@ public enum TranscriptAlignment {
                              imageIDs: groups[$0].map(\.id),
                              timingPrecision: texts[$0].isEmpty ? "screenshot-only" : "word")
         }
+    }
+
+    private static func isExactExcerpt(card: ReviewCard, transcript: TranscriptSegment) -> Bool {
+        guard let words = transcript.words, !words.isEmpty,
+              let start = transcript.startSeconds, let end = transcript.endSeconds,
+              let slices = exactSlices(text: transcript.text, words: words, start: start, end: end) else { return false }
+        for lower in words.indices where words[lower].startSeconds == card.startSeconds {
+            for upper in lower..<words.count where words[upper].endSeconds == card.endSeconds {
+                if slices[lower...upper].joined() == card.text { return true }
+            }
+        }
+        return false
     }
 
     /// Match the entire original text. Only whitespace may be absent from provider

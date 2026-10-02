@@ -55,3 +55,11 @@ Report separately: authored tests, tests executed/passed, macOS compiler result,
 - While recording, switch apps with ⌘Tab, click other windows, change Spaces, enter another app's full-screen Space, and use multiple displays. The HUD remains frontmost and draggable, does not take typing focus, and Stop still works.
 - Mark and enter pen mode: HUD must not blink or disappear; saved bookmark/pen PNGs must exclude controls. Stop during drawing must save the annotation and finalize exactly once. On stop/failure the HUD must disappear and not return after a Space change.
 - Native automated smoke tests exercise setup with injected permissions/key storage and verify panel policy, rendering and cleanup. They cannot prove real OS TCC, Keychain prompts or cross-application full-screen behavior; use physical macOS 11 and current macOS devices for those checks.
+
+
+## v0.3.1 card grouping and pen regression
+
+- Record several spoken passages with screenshots. After automatic transcription, compare each card's text/time/image with the independent HTML and Markdown exports; do not accept one combined editor card with multiple exported passages.
+- Reopen an unedited v0.3.0 project: regroup from stored word times with no API request. Repeat the open, edit one split card, then reopen/export: no duplicate cards, lost whitespace or overwritten edits.
+- From another foreground application, click Pen once and draw immediately. Verify visible strokes, Undo, Clear, Enter/Save, Escape/Cancel and Stop during annotation. The recording HUD must stay above both pen windows and remain clickable.
+- Disconnect the chosen display while recording: requesting Pen must explain the missing display and must not silently create a normal bookmark.

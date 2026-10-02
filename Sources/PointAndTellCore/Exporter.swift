@@ -111,7 +111,8 @@ public enum ProjectExporter {
 
     private static func prepare(project: ProjectManifest, store: ProjectStore, limits: ExportLimits) throws -> Prepared {
         let cards = project.reviewCards.isEmpty
-            ? FrameMatcher.suggestCards(for: project.transcripts, anchors: project.anchors) : project.reviewCards
+            ? FrameMatcher.suggestCards(for: project.transcripts, anchors: project.anchors)
+            : ReviewCardGrouping.cards(from: project.reviewCards, transcripts: project.transcripts, anchors: project.anchors)
         // Avoid Dictionary(uniqueKeysWithValues:) trapping on a malformed, unsaved project.
         var anchors: [UUID: VisualAnchor] = [:]
         for anchor in project.anchors { anchors[anchor.id] = anchor }
