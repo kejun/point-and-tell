@@ -72,16 +72,6 @@ final class PrimaryButtonCell: NSButtonCell {
                           range: NSRange(location: 0, length: text.length))
         return super.drawTitle(text, withFrame: frame, in: controlView)
     }
-
-    override func drawImage(_ image: NSImage, withFrame frame: NSRect, in controlView: NSView) {
-        let tinted = NSImage(size: image.size, flipped: false) { rect in
-            image.draw(in: rect)
-            NSColor.white.setFill(); rect.fill(using: .sourceIn)
-            return true
-        }
-        tinted.draw(in: frame, from: .zero, operation: .sourceOver,
-                    fraction: isEnabled ? 1 : 0.65, respectFlipped: true, hints: nil)
-    }
 }
 
 final class SurfaceView: NSView {
