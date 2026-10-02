@@ -1,0 +1,50 @@
+name: Publish signed macOS update
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: point-and-tell-release
+  cancel-in-progress: false
+jobs:
+  verify:
+    if: github.ref == 'refs/heads/main'
+    uses: ./.github/workflows/macos.yml
+  publish:
+    needs: verify
+    if: github.ref == 'refs/heads/main'
+    runs-on: macos-15
+    timeout-minutes: 25
+    permissions:
+      contents: write
+    env:
+      SOURCE_COMMIT: ${{ github.sha }}
+      SPARKLE_PUBLIC_ED_KEY: ${{ vars.SPARKLE_PUBLIC_ED_KEY }}
+      REQUIRE_UPDATE_KEY: '1'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          fetch-depth: 0
+      - name: Require update signing configuration
+        env:
+          PRIVATE_KEY_PRESENT: ${{ secrets.SPARKLE_PRIVATE_ED_KEY != '' }}
+        run: |
+          test "$PRIVATE_KEY_PRESENT" = true
+          test -n "$SPARKLE_PUBLIC_ED_KEY"
+      - name: Build update-enabled Universal app
+        run: ARCH=universal scripts/build-app.sh
+      - name: Publish immutable archive and signed feed atomically
+        env:
+          SPARKLE_PRIVATE_ED_KEY: ${{ secrets.SPARKLE_PRIVATE_ED_KEY }}
+        run: scripts/publish-update.sh
+      - name: Keep exact distributed package
+        uses: actions/upload-artifact@v4
+        with:
+          name: Published-macOS-update
+          path: |
+            dist/update-release/*.zip
+            dist/update-release/*.sha256
+            dist/update-release/build.json
+            updates/appcast.xml
+          if-no-files-found: error
