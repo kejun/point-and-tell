@@ -203,9 +203,11 @@ public enum ProjectExporter {
                           let bytes = prepared.imageData[id] else { return nil }
                     return "<figure><img src=\"data:image/png;base64,\(bytes.base64EncodedString())\" alt=\"Screenshot for card \(index + 1)\"><figcaption>Screenshot · \(escapeHTML(timeLabel(image.timestampSeconds))) · \(image.kind.rawValue)</figcaption></figure>"
                 }.joined(separator: "\n")
+                let unavailable = moment.imageIDs.filter { id in !card.images.contains { $0.id == id } }.count
+                let unavailableNotice = unavailable > 0 ? "<p class=\"notice\">Selected screenshot unavailable (\(unavailable))</p>" : ""
                 let precision = precisionLabel(moment, imageCount: moment.imageIDs.count)
                 let timing = moment.startSeconds.flatMap { start in moment.endSeconds.map { "Speech · \(timeLabel(start)) – \(timeLabel($0))" } } ?? ""
-                return "<article class=\"moment\" data-timing=\"\(moment.timingPrecision)\"><div class=\"passage\"><p class=\"time\">\(escapeHTML(timing))</p><p class=\"transcript\">\(escapeHTML(moment.text))</p><p class=\"precision\">\(escapeHTML(precision))</p></div><div class=\"screenshots\">\(figures)</div></article>"
+                return "<article class=\"moment\" data-timing=\"\(moment.timingPrecision)\"><div class=\"passage\"><p class=\"time\">\(escapeHTML(timing))</p><p class=\"transcript\">\(escapeHTML(moment.text))</p><p class=\"precision\">\(escapeHTML(precision))</p></div><div class=\"screenshots\">\(figures)\(unavailableNotice)</div></article>"
             }.joined(separator: "\n")
             let missing = card.missingImageCount > 0 ? "<p class=\"notice\">Image unavailable (\(card.missingImageCount))</p>" : ""
             let unselected = card.images.isEmpty && card.missingImageCount == 0

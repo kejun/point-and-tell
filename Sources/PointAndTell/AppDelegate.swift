@@ -915,7 +915,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         endField.stringValue = card.endSeconds.map { String(format: "%.3f", $0) } ?? ""
         cardInfo.stringValue = "讲解 \(String(format: "%02d", index + 1))"
         savedLabel.stringValue = "文字自动保存"
-        attachmentLabel.stringValue = card.frameIDs.isEmpty ? "尚未配图 · 预览后点击“添加”或“替换”" : "已配 \(card.frameIDs.count) 张图 · 按添加顺序导出"
+        attachmentLabel.stringValue = card.frameIDs.isEmpty ? "尚未配图 · 预览后点击“添加”或“替换”" : "已配 \(card.frameIDs.count) 张图 · 导出时与讲解分组"
         if let id = card.frameIDs.first, let anchorIndex = project?.anchors.firstIndex(where: { $0.id == id }) { framePicker.selectItem(at: anchorIndex) }
         else { framePicker.select(nil) }
         showSelectedFrame(); updateInterface()
