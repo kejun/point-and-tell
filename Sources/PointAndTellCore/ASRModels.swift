@@ -71,13 +71,16 @@ public struct ASRDiagnostic: Codable, Equatable, Sendable {
 
     private init(stage: ASRFailureStage, httpStatus: Int? = nil, code: String? = nil,
                  requestID: String? = nil, forceRewrite: Bool = false) {
-        self.stage = stage
-        self.httpStatus = stage == .http ? httpStatus.flatMap { (100...599).contains($0) ? $0 : nil } : nil
+        let safeStatus = stage == .http ? httpStatus.flatMap { (100...599).contains($0) ? $0 : nil } : nil
         let providerStep = stage == .http || stage == .provider
-        self.code = providerStep ? ASRSafeDiagnostics.code(code) : nil
-        self.requestID = providerStep ? ASRSafeDiagnostics.requestID(requestID) : nil
-        self.requiresSanitization = forceRewrite || self.httpStatus != httpStatus
-            || self.code != code || self.requestID != requestID
+        let safeCode = providerStep ? ASRSafeDiagnostics.code(code) : nil
+        let safeRequestID = providerStep ? ASRSafeDiagnostics.requestID(requestID) : nil
+        self.stage = stage
+        self.httpStatus = safeStatus
+        self.code = safeCode
+        self.requestID = safeRequestID
+        self.requiresSanitization = forceRewrite || safeStatus != httpStatus
+            || safeCode != code || safeRequestID != requestID
     }
 
     /// Render only validated structured fields, including IDs that the generic
