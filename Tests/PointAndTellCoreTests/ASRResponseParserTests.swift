@@ -28,10 +28,13 @@ final class ASRResponseParserTests: XCTestCase {
     }
 
     func testFullNonstreamingTextIsNotDiscardedOrGivenLastSentenceTiming() throws {
-        let sentence = try parse(ASRFixtures.fullTextJSON).sentences[0]
-        XCTAssertEqual(sentence.text, "First. Second.")
-        XCTAssertNil(sentence.beginTimeMilliseconds)
-        XCTAssertNil(sentence.endTimeMilliseconds)
+        let sentences = try parse(ASRFixtures.fullTextJSON).sentences
+        XCTAssertEqual(sentences.map(\.text).joined(), "First. Second.")
+        XCTAssertEqual(sentences.count, 2)
+        XCTAssertNil(sentences[0].beginTimeMilliseconds)
+        XCTAssertNil(sentences[0].endTimeMilliseconds)
+        XCTAssertEqual(sentences[1].text, "Second.")
+        XCTAssertTrue(sentences[1].hasCompleteTiming)
     }
 
     func testTextOnlyJSONIsExplicitlyUntimed() throws {
@@ -93,6 +96,29 @@ final class ASRResponseParserTests: XCTestCase {
 
     func testBOMIsAccepted() throws {
         XCTAssertEqual(try parse("\u{FEFF}" + ASRFixtures.json).sentences.count, 1)
+    }
+
+    func testWordTimestampsPunctuationAndFinalSSEReplacementArePreserved() throws {
+        let json = #"{"output":{"sentence":{"text":"Hello, 世界。","begin_time":101,"end_time":2999,"sentence_end":true,"sentence_id":1,"words":[{"text":"Hello","punctuation":",","begin_time":101,"end_time":1001,"fixed":true},{"text":"世界","punctuation":"。","begin_time":2001,"end_time":2999,"fixed":true}]}}}"#
+        let words = try parse(json).sentences[0].words!
+        XCTAssertEqual(words.map(\.text), ["Hello,", "世界。"])
+        XCTAssertEqual(words.map(\.beginTimeMilliseconds), [101, 2001])
+        let replacement = json.replacingOccurrences(of: "2001", with: "2123")
+        let result = try parse("data: \(json)\n\ndata: \(replacement)\n\n")
+        XCTAssertEqual(result.sentences.count, 1)
+        XCTAssertEqual(result.sentences[0].words?[1].beginTimeMilliseconds, 2123)
+        for invalid in [json.replacingOccurrences(of: "2001", with: "-1"),
+                        json.replacingOccurrences(of: "\"fixed\":true", with: "\"fixed\":false")] {
+            XCTAssertNil(try parse(invalid).sentences[0].words)
+            XCTAssertTrue(try parse(invalid).sentences[0].hasCompleteTiming)
+        }
+    }
+
+    func testSentenceArrayPreservesEverySentenceTime() throws {
+        let json = #"{"output":{"text":"甲。乙。","sentences":[{"text":"甲。","begin_time":100,"end_time":200,"sentence_end":true},{"text":"乙。","begin_time":301,"end_time":402,"sentence_end":true}]}}"#
+        let sentences = try parse(json).sentences
+        XCTAssertEqual(sentences.map(\.text), ["甲。", "乙。"])
+        XCTAssertEqual(sentences.map(\.beginTimeMilliseconds), [100, 301])
     }
 
     private func parse(_ body: String) throws -> ASRResult {

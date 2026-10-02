@@ -4,7 +4,7 @@
 
 Record your screen while explaining what should change. Mark the important moments, draw on a frozen screenshot, then turn your explanation into editable text-and-image cards and an offline HTML file.
 
-**New in v0.2.0:** a native sidebar workspace, clearer card editing and the new app icon. See [UI design and screenshots](docs/UI-DESIGN.md).
+**New in v0.2.1:** timestamp-aligned speech and screenshots in HTML/Markdown, retained word-level ASR timing, and two always-visible export actions. See [export alignment](docs/EXPORT-ALIGNMENT.md).
 
 ![Native review workspace](docs/screenshots/review-light.png)
 
@@ -24,7 +24,7 @@ The app is ad-hoc signed, **not Apple-notarized**. On macOS 11, extract the ZIP,
 4. Stop and wait for the local audio-track/decode check. Use **试听录屏** to confirm your speech is audible. Original MOV, PNG screenshots and the project manifest remain local
 5. Optionally enter an Alibaba Cloud API key and choose **开始转写** (or **继续 / 重试转写**). The app asks before uploading audio; only microphone audio is sent, in sequential ~3-minute chunks. Video and screenshots are never sent to the ASR service. The API key stays in memory only
 6. Review cards: edit text, save timing changes, select/add/remove screenshots, or extract a frame at a specified movie time. Untimed results are explicitly left for manual alignment
-7. Export self-contained **HTML**, or **PNG + Markdown + JSON** for tools that ingest image attachments more reliably. An HTML upload alone does not guarantee that a model will inspect embedded images
+7. Click **导出独立 HTML…** or **导出图片 + Markdown…** directly above the card workspace to export self-contained **HTML**, or **PNG + Markdown + JSON** for tools that ingest image attachments more reliably. An HTML upload alone does not guarantee that a model will inspect embedded images
 
 ## If audio or transcription fails
 

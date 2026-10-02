@@ -58,14 +58,28 @@ public struct VisualAnchor: Codable, Equatable, Identifiable, Sendable {
 
 /// Times are seconds on the recording clock, never response-arrival times.
 /// Missing or invalid timing is deliberately not replaced by an estimate.
+public struct TranscriptWord: Codable, Equatable, Sendable {
+    public var text: String
+    public var startSeconds: Double
+    public var endSeconds: Double
+
+    public init(text: String, startSeconds: Double, endSeconds: Double) {
+        self.text = text; self.startSeconds = startSeconds; self.endSeconds = endSeconds
+    }
+}
+
 public struct TranscriptSegment: Codable, Equatable, Identifiable, Sendable {
     public var id: UUID
     public var text: String
     public var startSeconds: Double?
     public var endSeconds: Double?
+    /// Optional for compatibility with projects saved before word timing was retained.
+    public var words: [TranscriptWord]?
 
-    public init(id: UUID = UUID(), text: String, startSeconds: Double? = nil, endSeconds: Double? = nil) {
+    public init(id: UUID = UUID(), text: String, startSeconds: Double? = nil, endSeconds: Double? = nil,
+                words: [TranscriptWord]? = nil) {
         self.id = id; self.text = text; self.startSeconds = startSeconds; self.endSeconds = endSeconds
+        self.words = words
     }
 
     public var isTimed: Bool {
@@ -80,7 +94,9 @@ public struct TranscriptSegment: Codable, Equatable, Identifiable, Sendable {
         }
         return TranscriptSegment(id: id, text: text,
                                  startSeconds: startSeconds.map { $0 + seconds },
-                                 endSeconds: endSeconds.map { $0 + seconds })
+                                 endSeconds: endSeconds.map { $0 + seconds },
+                                 words: words?.map { TranscriptWord(text: $0.text,
+                                     startSeconds: $0.startSeconds + seconds, endSeconds: $0.endSeconds + seconds) })
     }
 }
 
@@ -336,14 +352,20 @@ public final class ProjectStore {
                 throw ProjectError.invalidManifest("pointer must be normalized")
             }
         }
-        for segment in project.transcripts { try timing(segment.startSeconds, segment.endSeconds) }
+        for segment in project.transcripts {
+            try timing(segment.startSeconds, segment.endSeconds)
+            for word in segment.words ?? [] { try timing(word.startSeconds, word.endSeconds) }
+        }
         for card in project.reviewCards { try timing(card.startSeconds, card.endSeconds); try unique(card.frameIDs) }
         for chunk in project.asrChunks {
             _ = try resolveRelativePath(chunk.relativePath)
             try time(chunk.startSeconds); try time(chunk.durationSeconds)
             if chunk.index < 0 { throw ProjectError.invalidManifest("invalid chunk index") }
             try unique(chunk.sentences.map(\.id))
-            for segment in chunk.sentences { try timing(segment.startSeconds, segment.endSeconds) }
+            for segment in chunk.sentences {
+                try timing(segment.startSeconds, segment.endSeconds)
+                for word in segment.words ?? [] { try timing(word.startSeconds, word.endSeconds) }
+            }
         }
     }
 }
