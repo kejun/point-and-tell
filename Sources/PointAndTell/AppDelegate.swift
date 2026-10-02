@@ -116,6 +116,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                           self.exportPicker.isEnabled, self.emptyContainer.isHidden,
                           let icon = Bundle.main.url(forResource: "AppIcon", withExtension: "icns"),
                           NSImage(contentsOf: icon) != nil else { exit(2) }
+                    self.window.makeFirstResponder(self.table)
                     try render("window", width: 1080, height: 760)
                     try render("review-dark-compact", width: 980, height: 680, dark: true)
                     // A timing draft follows its card across a selection change;
@@ -139,6 +140,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     guard self.startButton.isEnabled, !self.transcribeButton.isEnabled else { exit(11) }
                     self.report("新建录制，边说边指。停止后可转写、校对并导出。")
                     try render("welcome", width: 1080, height: 760)
+                    self.timerLabel.stringValue = "00:24"
+                    self.microphoneLabel.stringValue = "内建麦克风 · −22 dBFS"
+                    self.microphoneLevel.doubleValue = -22
+                    self.toolbar.orderFrontRegardless()
+                    if let palette = self.toolbar.contentView {
+                        palette.layoutSubtreeIfNeeded()
+                        guard self.stopButton.frame.maxX <= palette.bounds.width else { exit(12) }
+                        if let bitmap = palette.bitmapImageRepForCachingDisplay(in: palette.bounds) {
+                            palette.cacheDisplay(in: palette.bounds, to: bitmap)
+                            try bitmap.representation(using: .png, properties: [:])?.write(to: directory.appendingPathComponent("recording-toolbar.png"))
+                        }
+                    }
+                    self.toolbar.orderOut(nil)
                     print("UI_SMOKE_OK · light/dark, compact layout, empty states, save and busy controls")
                     exit(0)
                 } catch { fputs("UI smoke render failed: \(error.localizedDescription)\n", stderr); exit(4) }
@@ -204,6 +218,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         makeSidebar(in: sidebar)
         makeWorkspace(in: main)
         updateInterface()
+        window.initialFirstResponder = startButton
         window.center()
     }
 
@@ -264,7 +279,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         exportPicker.image = NSImage(systemSymbolName: "square.and.arrow.up", accessibilityDescription: nil)
         exportPicker.imagePosition = .imageLeading; exportPicker.bezelStyle = .rounded
         exportPicker.setAccessibilityLabel("导出讲解卡片")
-        let header = row([InterfaceStyle.column([workspaceTitle, workspaceSubtitle], spacing: 5), InterfaceStyle.spacer(), exportPicker])
+        let titleGroup = InterfaceStyle.column([workspaceTitle, workspaceSubtitle], spacing: 5)
+        exportPicker.setContentHuggingPriority(.required, for: .horizontal)
+        let header = row([titleGroup, exportPicker])
         stepLabel.font = .systemFont(ofSize: 11, weight: .medium); stepLabel.textColor = InterfaceStyle.accent
 
         let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("card")); column.title = "讲解卡片"
@@ -307,7 +324,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         savedLabel.font = .systemFont(ofSize: 10); savedLabel.textColor = .secondaryLabelColor
         let title = row([cardInfo, InterfaceStyle.spacer(), savedLabel])
         transcriptEditor.delegate = self; transcriptEditor.isRichText = false; transcriptEditor.allowsUndo = true
-        transcriptEditor.minSize = NSSize(width: 0, height: 100)
+        transcriptEditor.minSize = NSSize(width: 0, height: 92)
         transcriptEditor.maxSize = NSSize(width: CGFloat.greatestFiniteMagnitude, height: CGFloat.greatestFiniteMagnitude)
         transcriptEditor.isHorizontallyResizable = false; transcriptEditor.autoresizingMask = .width
         transcriptEditor.textContainer?.widthTracksTextView = true
@@ -316,7 +333,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         transcriptEditor.textContainerInset = NSSize(width: 10, height: 10)
         transcriptEditor.setAccessibilityLabel("讲解文字，自动保存")
         let textScroll = NSScrollView(); textScroll.documentView = transcriptEditor; textScroll.hasVerticalScroller = true
-        textScroll.borderType = .bezelBorder; textScroll.heightAnchor.constraint(equalToConstant: 104).isActive = true
+        textScroll.borderType = .bezelBorder; textScroll.heightAnchor.constraint(equalToConstant: 96).isActive = true
         startField.placeholderString = "起始"; endField.placeholderString = "结束"
         startField.setAccessibilityLabel("起始时间，秒"); endField.setAccessibilityLabel("结束时间，秒")
         startField.widthAnchor.constraint(equalToConstant: 76).isActive = true
@@ -332,9 +349,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         preview.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         preview.setContentCompressionResistancePriority(.defaultLow, for: .vertical)
         preview.setAccessibilityLabel("截图预览")
-        let previewSurface = SurfaceView(); previewSurface.fill = .underPageBackgroundColor; previewSurface.radius = 8
+        let previewSurface = SurfaceView(); previewSurface.fill = .windowBackgroundColor; previewSurface.radius = 8
         InterfaceStyle.pin(preview, to: previewSurface, inset: 8)
-        previewSurface.heightAnchor.constraint(equalToConstant: 176).isActive = true
+        previewSurface.heightAnchor.constraint(equalToConstant: 160).isActive = true
         previewEmpty.font = .systemFont(ofSize: 12); previewEmpty.textColor = .secondaryLabelColor
         previewEmpty.alignment = .center; previewEmpty.translatesAutoresizingMaskIntoConstraints = false; previewSurface.addSubview(previewEmpty)
         NSLayoutConstraint.activate([previewEmpty.centerXAnchor.constraint(equalTo: previewSurface.centerXAnchor), previewEmpty.centerYAnchor.constraint(equalTo: previewSurface.centerYAnchor)])
@@ -391,7 +408,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         button.setAccessibilityLabel(button.title)
     }
     private func makeToolbar() {
-        toolbar = NSPanel(contentRect: NSRect(x: 60, y: 60, width: 730, height: 50), styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
+        toolbar = NSPanel(contentRect: NSRect(x: 60, y: 60, width: 790, height: 60), styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
         toolbar.title = "Point & Tell · 录制中"; toolbar.level = .floating; toolbar.isFloatingPanel = true; toolbar.hidesOnDeactivate = false; toolbar.isReleasedWhenClosed = false
         stopButton = button("结束录制", #selector(stopRecording)); decorate(stopButton, symbol: "stop.fill")
         stopButton.contentTintColor = .systemRed
