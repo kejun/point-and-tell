@@ -4,15 +4,15 @@
 
 Record your screen while explaining what should change. Mark the important moments, draw on a frozen screenshot, then turn your explanation into editable text-and-image cards and an offline HTML file.
 
-**New in v0.3.1:** the review workspace now creates the same timestamp-and-screenshot cards as the HTML export, including automatically regrouping unchanged older projects without re-uploading audio. Pen mode now uses a dedicated input panel for first-click drawing, drag strokes, undo/clear, Enter to save and Escape to cancel, while the recording toolbar stays visible. Choosing an image in the card picker now saves it immediately and replaces the previous image, with no extra Add/Replace buttons. See [card and pen fixes](docs/CARDS-AND-PEN.md).
+**New in v0.3.2:** recording uses the native session preset to negotiate compatible screen/audio formats. Startup errors now retain their failure stage and underlying error codes, with a Chinese dialog, Copy Diagnostics and a local diagnostic file. A failed start shows a retry action and does not trigger transcription. See [startup compatibility and diagnostic limits](docs/RECORDING-STARTUP.md). The [v0.3.1 card, pen and instant screenshot-selection fixes](docs/CARDS-AND-PEN.md) remain included.
 
 <img src="docs/screenshots/review-light.png" width=600>
 
-**Native macOS 11+, Intel + Apple Silicon. Preview v0.3.1.** No Electron, local language model, account, server, or database.
+**Native macOS 11+, Intel + Apple Silicon. Preview v0.3.2.** No Electron, local language model, account, server, or database.
 
 ## Get the app
 
-[Download v0.3.1 Universal](releases/v0.3.1/Point-and-Tell-v0.3.1-macOS-universal.zip?raw=true) for Intel and Apple Silicon. The application ZIP, SHA-256 checksum and exact source/build manifest are committed under [releases/v0.3.1](releases/v0.3.1). See the [release notes](releases/README.md) for verification and rollback details.
+[Download v0.3.2 Universal](releases/v0.3.2/Point-and-Tell-v0.3.2-macOS-universal.zip?raw=true) for Intel and Apple Silicon. The application ZIP, SHA-256 checksum and exact source/build manifest are committed under [releases/v0.3.2](releases/v0.3.2). See the [release notes](releases/README.md) for verification and rollback details.
 
 The app is ad-hoc signed, **not Apple-notarized**. On macOS 11, extract the ZIP, move the app to Applications, then use Finder → right-click → Open if Gatekeeper asks. Do not disable system security. No Apple Developer account is required to build locally.
 
@@ -26,6 +26,8 @@ The app is ad-hoc signed, **not Apple-notarized**. On macOS 11, extract the ZIP,
 6. Use the directly visible **导出独立 HTML…** or **导出图片 + Markdown…** buttons. Review screenshots before sharing. Update the key or permissions through **权限与转写设置…** (⌘,)
 
 ## If audio or transcription fails
+
+If **New Recording** fails before the toolbar appears, use **复制诊断** in the error dialog. The stage and nested error codes are also saved in a unique `capture-error-*.txt` file in that project. Keep that diagnostic for troubleshooting; a generic “operation could not be completed” message alone does not identify the failing component.
 
 1. After setup, record a disposable, non-sensitive 10-second test: say a few words, mark once, and stop. This starts automatic audio upload/transcription; use **取消转写** to stop further processing if needed (already sent audio cannot be recalled). **试听录屏** itself plays only the local recording
 2. If the live meter stays flat or playback is silent, select the built-in mic explicitly, check Microphone permission and macOS Sound → Input. Disconnect/reselect unavailable Bluetooth/USB inputs. The app never silently swaps a missing explicitly selected device
