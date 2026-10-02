@@ -1,5 +1,21 @@
 # Download Point & Tell
 
+## v0.1.1 · Audio diagnostics · Universal · macOS 11.0+
+
+[Download v0.1.1](v0.1.1/Point-and-Tell-v0.1.1-macOS-universal.zip?raw=true)
+
+Adds microphone selection and live levels, local playback, audio-track/decode checks, explicit low-signal upload confirmation, and safe staged ASR errors.
+
+- Archive: 924,015 bytes; Intel x86_64 + Apple Silicon arm64
+- Source commit: [32110e3cdc4b9aa01f729e8d8bda649e47e2327b](https://github.com/kejun/point-and-tell/commit/32110e3cdc4b9aa01f729e8d8bda649e47e2327b)
+- [Source build/test run](https://github.com/kejun/point-and-tell/actions/runs/36964548382): 107 tests passed on each native architecture; nonzero AAC MOV/WAV, actual delayed signal timing, silence/missing/corrupt input, safe retry, local playback readiness and UI rendering passed
+- [SHA-256 checksum](v0.1.1/Point-and-Tell-v0.1.1-macOS-universal.zip.sha256) and [source/build manifest](v0.1.1/build.json)
+- Ad-hoc signed, not Apple-notarized. Both slices target macOS 11.0
+
+First check: explicitly select the built-in microphone, record ten seconds of non-sensitive speech, confirm the live level responds, then Stop and use **本地试听录屏**. No API key is needed for this check. Missing audio blocks transcription; very low level is advisory and needs explicit confirmation to upload.
+
+This release does not establish the cause of the original Big Sur no-audio report. Actual macOS 11 microphone/permission behavior, audible output and billed provider integration still need device verification.
+
 ## v0.1.0 · Universal · macOS 11.0+
 
 [Download the app ZIP](v0.1.0/Point-and-Tell-v0.1.0-macOS-universal.zip?raw=true)

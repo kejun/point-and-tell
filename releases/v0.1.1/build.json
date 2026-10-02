@@ -1,0 +1,44 @@
+{
+  "version": "0.1.1",
+  "source_commit": "32110e3cdc4b9aa01f729e8d8bda649e47e2327b",
+  "architecture": "universal",
+  "slices": [
+    "x86_64",
+    "arm64"
+  ],
+  "build_host_architecture": "x86_64",
+  "minimum_macos": "11.0",
+  "archive": "Point-and-Tell-v0.1.1-macOS-universal.zip",
+  "sha256": "339b5cdddc078d2a9f2ada363aa7179c3fc7b13df047c19b9faf337a756c266c",
+  "bytes": 924015,
+  "signature": "ad-hoc; codesign --verify --strict passed",
+  "notarized": false,
+  "ci_run_url": "https://github.com/kejun/point-and-tell/actions/runs/36964548382",
+  "unverified": [
+    "macOS 11 device runtime",
+    "screen and microphone permissions",
+    "real billed ASR request",
+    "10-minute Intel/8GB performance"
+  ],
+  "native_verification": {
+    "ci_run_id": 36964548382,
+    "source_commit": "32110e3cdc4b9aa01f729e8d8bda649e47e2327b",
+    "tests_per_architecture": 107,
+    "jobs": {
+      "x86_64": 110705326496,
+      "arm64": 110705326630
+    },
+    "passed": [
+      "core tests",
+      "Universal build, minOS11.0 and ad-hoc signature",
+      "44.1/48kHz AAC MOV decoding and 16kHz WAV conversion",
+      "180-second splitting and retry preservation",
+      "actual delayed tone onset and quiet leading interval",
+      "silence warning, missing track and corrupt input rejection",
+      "local muted AVPlayerItem readiness",
+      "native AppKit UI render"
+    ],
+    "billed_asr_requests": 0,
+    "physical_capture_tested": false
+  }
+}
