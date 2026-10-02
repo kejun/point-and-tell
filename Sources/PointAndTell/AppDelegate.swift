@@ -568,7 +568,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         microphoneLevel.toolTip = "麦克风平均电平，−60 至 0 dBFS；有电平不等于一定是人声"
         microphoneLabel.widthAnchor.constraint(equalToConstant: 215).isActive = true
         microphoneLabel.lineBreakMode = .byTruncatingMiddle
-        let controls = row([InterfaceStyle.symbol("record.circle.fill", size: 14), timerLabel, microphoneLabel, microphoneLevel, button("标记 ⌃⌥M", #selector(mark)), button("画笔", #selector(pen)), stopButton]); controls.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12); toolbar.contentView = controls
+        let controls = row([InterfaceStyle.symbol("record.circle.fill", size: 14), timerLabel, microphoneLabel, microphoneLevel, button("标记 ⌃⌥M", #selector(mark)), button("画笔", #selector(pen)), stopButton]); controls.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+        let background = WindowBackgroundView(); toolbar.contentView = background
+        InterfaceStyle.pin(controls, to: background, inset: 0)
     }
     @objc private func about() { let a = NSAlert(); a.messageText = "Point & Tell " + (Bundle.main.infoDictionary?["CFBundleShortVersionString"] as? String ?? ""); a.informativeText = "适用于 macOS 11+ 的轻量屏幕讲解工具。\n录屏和标注本地保存；完成首次设置后，录制结束会自动上传音频转写。\n语音服务使用 qwen-audio-3.0-asr-flash。"; a.runModal() }
     private func setBusy(_ value: Bool, status: String? = nil) {
