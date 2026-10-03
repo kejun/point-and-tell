@@ -4,13 +4,15 @@
 
 Record your screen while explaining what should change. Mark the important moments, draw on a frozen screenshot, then turn your explanation into editable text-and-image cards and an offline HTML file.
 
+**New in v0.5.2 source:** primary buttons keep translucent white text/icons while pressed. Finishing a recording activates the app and brings the workspace forward, including when it was hidden or minimized.
+
 **New in v0.5.1 source:** recording screenshots determine the number of explanation passages. All transcription text is assigned once, in order, including distant or untimed speech; punctuation, pauses and timestamps help choose editable boundaries. Use **首句移到上一张 / 末句移到下一张** below the text editor to adjust adjacent cards. Reopening an existing project updates untouched cards locally without another ASR request. Manual edits and deletions remain protected. See [screenshot cards and timing](docs/SCREENSHOT-CARDS.md).
 
 <img src="docs/screenshots/primary-buttons-light.png" width=600>
 
 **New in v0.5.0 source:** pause/resume screen and microphone together from the recording toolbar, keeping one MOV. Paused recordings can be ended directly; existing drawings are preserved. See [pause behavior and device verification](docs/PAUSE-RECORDING.md).
 
-**Native macOS 11+, Intel + Apple Silicon. Source v0.5.1.** No Electron, local language model, account, server, or database.
+**Native macOS 11+, Intel + Apple Silicon. Source v0.5.2.** No Electron, local language model, account, server, or database.
 
 The v0.4.0 source adds signed application updates: automatic checks, a **检查更新…** menu, and download/install/relaunch through Sparkle. Recording, transcription and export defer updates. See [update setup and release instructions](docs/AUTO-UPDATES.md). A signing-configured release is required to activate updating; ordinary unsigned-for-updates development builds keep it disabled.
 

@@ -7,8 +7,8 @@
 <key>CFBundleExecutable</key><string>PointAndTell</string>
 <key>CFBundleIconFile</key><string>AppIcon.icns</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>0.5.1</string>
-<key>CFBundleVersion</key><string>13</string>
+<key>CFBundleShortVersionString</key><string>0.5.2</string>
+<key>CFBundleVersion</key><string>14</string>
 <key>SUFeedURL</key><string>https://raw.githubusercontent.com/kejun/point-and-tell/main/updates/appcast.xml</string>
 <key>SUEnableAutomaticChecks</key><true/>
 <key>SUScheduledCheckInterval</key><integer>86400</integer>
