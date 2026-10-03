@@ -13,7 +13,7 @@ public struct TranscriptMoment: Codable, Equatable {
 public enum TranscriptAlignment {
     public static func moments(card: ReviewCard, transcript: TranscriptSegment?,
                                anchors: [VisualAnchor]) -> [TranscriptMoment] {
-        if card.sourceAnchorID != nil {
+        if card.sourceAnchorID != nil || card.userEdited == true {
             let available = Set(anchors.map(\.id))
             return [TranscriptMoment(text: card.text, startSeconds: card.startSeconds,
                 endSeconds: card.endSeconds, imageIDs: card.frameIDs.filter { available.contains($0) },

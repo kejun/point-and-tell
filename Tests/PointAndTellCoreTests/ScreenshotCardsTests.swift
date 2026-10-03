@@ -13,7 +13,8 @@ final class ScreenshotCardsTests: XCTestCase {
             words: parts.map { TranscriptWord(text: $0.0, startSeconds: $0.1, endSeconds: $0.2) })
     }
     private func project(_ pictures: [VisualAnchor], _ segments: [TranscriptSegment] = []) -> ProjectManifest {
-        ProjectManifest(title: "Screenshot first", anchors: pictures, transcripts: segments, screenshotCardVersion: 1)
+        ProjectManifest(title: "Screenshot first", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            anchors: pictures, transcripts: segments, screenshotCardVersion: 1)
     }
 
     func testTwoPenSessionsAndBookmarkExistBeforeASRAndReceiveOneLongParagraph() {
@@ -158,7 +159,7 @@ final class ScreenshotCardsTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: root) }
         let store = ProjectStore(folderURL: root.appendingPathComponent("project"))
         _ = try store.create(title: "Screenshots")
-        let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jzfoAAAAASUVORK5CYII=")!
+        let png = Data(base64Encoded: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGP4z8DwHwAFAAH/iZk9HQAAAABJRU5ErkJggg==")!
         let a = picture(2), b = picture(7)
         for anchor in [a, b] { try png.write(to: store.resolveRelativePath(anchor.imageRelativePath)) }
         var p = project([a, b], [speech([("甲。", 1, 3), ("乙。", 6, 8)])]); p.reconcileScreenshotCards()

@@ -1352,9 +1352,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         do { try persist(); savedLabel.stringValue = "已保存"; report("卡片已保存到本地项目。") } catch { fail(error) }
     }
     @objc private func addCard() {
-        guard !busy, project != nil, commitTiming() else { return }
-        let card = ReviewCard(text: ""); project?.reviewCards.append(card)
-        do { try persist(); editingCardID = card.id; refresh(); window.makeFirstResponder(transcriptEditor) } catch { fail(error) }
+        guard !busy, commitTiming(), let store = store, var updated = project else { return }
+        let card = ReviewCard(text: "", userEdited: true); updated.reviewCards.append(card)
+        do { try store.save(updated); project = updated; editingCardID = card.id; refresh(); window.makeFirstResponder(transcriptEditor) } catch { fail(error) }
     }
     @objc private func deleteCard() {
         guard !busy, !recorder.isBusy, let index = cardIndex,
