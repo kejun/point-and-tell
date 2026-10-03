@@ -420,7 +420,9 @@ final class RecordingEngine: NSObject {
             var compression = videoSettings[AVVideoCompressionPropertiesKey] as? [String: Any] ?? [:]
             compression[AVVideoAllowFrameReorderingKey] = false
             compression[AVVideoExpectedSourceFrameRateKey] = requestedFPS
-            compression[kVTCompressionPropertyKey_MaxFrameDelayCount as String] = 1
+            // AVCaptureMovieFileOutput's H.264 validation accepts only 3 for
+            // this VideoToolbox key; requesting 0 or 1 raises NSException.
+            compression[kVTCompressionPropertyKey_MaxFrameDelayCount as String] = 3
             compression[kVTCompressionPropertyKey_RealTime as String] = true
             videoSettings[AVVideoCompressionPropertiesKey] = compression
             movie.setOutputSettings(videoSettings, for: video)
