@@ -1,6 +1,6 @@
 # Verification
 
-Pause/resume (#12) adds 50-cycle core and native fake-output checks, transition timeout/Stop/delegate races, paused HUD and drawing checks, final video decode validation, and an opt-in native 10+30+8-second capture probe. See [PAUSE-RECORDING.md](PAUSE-RECORDING.md) for checks and remaining Big Sur/device/performance acceptance. An unavailable probe is unverified, not passed.
+Pause/resume (#12) adds 50-cycle core and native fake-output checks, transition timeout/Stop/delegate races, paused HUD and drawing checks, final video decode validation, and an opt-in native 10+30+8-second capture probe. See [PAUSE-RECORDING.md](PAUSE-RECORDING.md) for checks and remaining Big Sur/device/performance acceptance. The capture probe is manual-only: CI and the reusable release verification workflow no longer run it or apply version-specific acceptance gates. An unavailable manual probe is unverified, not passed.
 
 ## Automated
 
@@ -79,4 +79,4 @@ Follow [SCREENSHOT-CARDS.md](SCREENSHOT-CARDS.md) for the source/clock trace and
 - Reopen a v0.5.0 project with untouched ambiguous cards: regenerate locally from saved transcription without uploading audio. Edited cards and deliberate deletions remain unchanged.
 - Use the first/last sentence movement buttons under the text field. Both cards save together; busy state, empty source, first/last boundaries and failed writes must leave unavailable operations disabled or unchanged. Reopen and export the edited result.
 - The native smoke fixture prints TRANSCRIPT_PARTITION_UI_OK after checking complete drafts, adjacent moves, busy controls and failed-save protection. It uses local fixtures without ASR calls.
-- The separate Intel capture-pause probe is unchanged; its existing failure does not become a passing segmentation test or a verified capture path.
+- The capture-pause probe remains available for manual diagnostics but is excluded from CI and release gates at the user’s request. Historical failures do not become passing tests or a verified capture path.
