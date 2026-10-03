@@ -335,32 +335,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                             try bitmap.representation(using: .png, properties: [:])?.write(to: directory.appendingPathComponent("recording-toolbar.png"))
                         }
                     }
-                    // Stop is clicked in a nonactivating HUD while another app
-                    // may own focus. Exercise the same completion presentation
-                    // from a hidden/inactive app, without capturing user media.
-                    NSApp.hide(nil)
-                    let hideDeadline = Date().addingTimeInterval(2)
-                    while (!NSApp.isHidden || NSApp.isActive) && Date() < hideDeadline {
-                        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
+                    self.verifyPostRecordingFocus {
+                        print("TOOLBAR_SMOKE_OK · persistent nonactivating HUD, all Spaces/full-screen flags, stopped cleanup")
+                        print("PAUSE_UI_OK · recording/pausing/paused/resuming/stopping buttons and update guards")
+                        print("UI_SMOKE_OK · light/dark, compact layout, empty states, save and busy controls")
+                        exit(0)
                     }
-                    guard NSApp.isHidden, !NSApp.isActive else { exit(81) }
-                    self.presentWorkspaceAfterRecording()
-                    let focusDeadline = Date().addingTimeInterval(2)
-                    while (!NSApp.isActive || !self.window.isKeyWindow) && Date() < focusDeadline {
-                        RunLoop.current.run(until: Date().addingTimeInterval(0.01))
-                    }
-                    guard !self.toolbar.isVisible, !self.toolbar.recordingVisible,
-                          NSApp.isActive, !NSApp.isHidden, self.window.isVisible,
-                          self.window.isKeyWindow, self.window.isMainWindow,
-                          self.window.level == .normal else { exit(82) }
-                    print("RECORDING_FINISH_FOCUS_OK · hidden/inactive app restored, workspace key/main, normal window level, HUD dismissed")
-                    print("TOOLBAR_SMOKE_OK · persistent nonactivating HUD, all Spaces/full-screen flags, stopped cleanup")
-                    print("PAUSE_UI_OK · recording/pausing/paused/resuming/stopping buttons and update guards")
-                    print("UI_SMOKE_OK · light/dark, compact layout, empty states, save and busy controls")
-                    exit(0)
                 } catch { fputs("UI smoke render failed: \(error.localizedDescription)\n", stderr); exit(4) }
             }
         } catch { fputs("UI smoke fixture failed\n", stderr); exit(1) }
+    }
+
+    private func verifyPostRecordingFocus(completion: @escaping () -> Void) {
+        // Return to the main queue between observations: hiding/activating an
+        // application is asynchronous, so a nested run loop inside a dispatch
+        // block cannot reliably finish these AppKit transitions.
+        func waitFor(_ state: @escaping () -> Bool, code: Int32, then: @escaping () -> Void) {
+            let deadline = Date().addingTimeInterval(3)
+            func poll() {
+                if state() { then(); return }
+                guard Date() < deadline else {
+                    fputs("Workspace focus fixture \(code): active=\(NSApp.isActive), hidden=\(NSApp.isHidden), visible=\(self.window.isVisible), key=\(self.window.isKeyWindow), main=\(self.window.isMainWindow)\n", stderr)
+                    exit(code)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: poll)
+            }
+            DispatchQueue.main.async(execute: poll)
+        }
+        NSApp.hide(nil)
+        waitFor({ NSApp.isHidden && !NSApp.isActive }, code: 81) {
+            self.presentWorkspaceAfterRecording()
+            waitFor({ NSApp.isActive && !NSApp.isHidden && self.window.isVisible
+                && self.window.isKeyWindow && self.window.isMainWindow }, code: 82) {
+                guard !self.toolbar.isVisible, !self.toolbar.recordingVisible,
+                      self.window.level == .normal else { exit(83) }
+                print("RECORDING_FINISH_FOCUS_OK · hidden/inactive app restored, workspace key/main, normal window level, HUD dismissed")
+                completion()
+            }
+        }
     }
 
     private func verifyCardDeletion(store: ProjectStore) throws {
