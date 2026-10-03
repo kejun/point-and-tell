@@ -1,0 +1,26 @@
+{
+  "version": "0.5.2",
+  "build": "14",
+  "source_commit": "10736a4251ec1b6ef84077f506a54ce11ef9b98f",
+  "architecture": "universal",
+  "slices": [
+    "x86_64",
+    "arm64"
+  ],
+  "build_host_architecture": "arm64",
+  "minimum_macos": "11.0",
+  "archive": "Point-and-Tell-v0.5.2-macOS-universal.zip",
+  "sha256": "5f5c028a615b256f921979eda6e3a8b4390c7515148e124e69777d8f4b85b547",
+  "bytes": 3898342,
+  "signature": "ad-hoc; codesign --verify --deep --strict passed",
+  "notarized": false,
+  "sparkle_version": "2.9.6",
+  "update_public_key": "/3vm6eU200fq6wTlldPxuVfQ6VxwYpKgjpD4MKHWayM=",
+  "ci_run_url": "https://github.com/kejun/point-and-tell/actions/runs/37114064063",
+  "unverified": [
+    "macOS 11 device runtime",
+    "screen and microphone permissions",
+    "real billed ASR request",
+    "10-minute Intel/8GB performance"
+  ]
+}
