@@ -408,6 +408,17 @@ final class RecordingEngine: NSObject {
         // is converted to the ASR format later by the existing local AudioChunker.
         movie.setOutputSettings(nil, for: video)
         movie.setOutputSettings(nil, for: audio)
+        // Real pause probes found reordered-frame preroll in each MOV edit:
+        // recordedDuration then led the presented timeline after every resume.
+        // Keep the negotiated codec/dimensions/rate, but disallow B-frame
+        // reordering so screenshot time follows presentation without preroll.
+        var videoSettings = movie.outputSettings(for: video)
+        if videoSettings[AVVideoCodecKey] != nil {
+            var compression = videoSettings[AVVideoCompressionPropertiesKey] as? [String: Any] ?? [:]
+            compression[AVVideoAllowFrameReorderingKey] = false
+            videoSettings[AVVideoCompressionPropertiesKey] = compression
+            movie.setOutputSettings(videoSettings, for: video)
+        }
         captureSession.commitConfiguration()
         session = captureSession
         output = movie

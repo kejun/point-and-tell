@@ -14,6 +14,8 @@ final class CapturePauseProbe {
     private var events: [[String: Any]] = []
     private var completed = false
     private var pausedClock = 0.0
+    private var finalClock = 0.0
+    private var markerClock = 0.0
     private let completion: (Int32) -> Void
     init(directory: URL, completion: @escaping (Int32) -> Void) { self.directory = directory; self.completion = completion }
     func start() {
@@ -62,7 +64,7 @@ final class CapturePauseProbe {
         recorder.resume { [weak self] result in
             guard let self = self, self.accept(result) else { return }
             self.note("resumed")
-            self.later(2) { self.note("marker-after-resume") }
+            self.later(2) { self.markerClock = self.recorder.elapsedSeconds; self.note("marker-after-resume") }
             self.later(8) {
                 self.recorder.stop { [weak self] result in
                     guard let self = self else { return }
@@ -76,10 +78,13 @@ final class CapturePauseProbe {
     }
     private func inspect(_ url: URL) {
         note("finished")
+        finalClock = recorder.elapsedSeconds
         DispatchQueue.global(qos: .utility).async {
             let result = Result { () -> [String: Any] in
                 let media = try RecordingMediaInspector.inspect(movieURL: url)
                 guard abs(media.durationSeconds - 18) < 1.2 else { throw ProbeError("Paused wall time remained in MOV duration: \(media.durationSeconds)") }
+                guard abs(self.finalClock - media.durationSeconds) < 0.5 else { throw ProbeError("Live media clock disagrees with finalized MOV: \(self.finalClock) vs \(media.durationSeconds)") }
+                guard abs(self.markerClock - self.pausedClock - 2) < 0.6 else { throw ProbeError("Post-resume screenshot clock drifted") }
                 let asset = AVURLAsset(url: url)
                 var evidence: [String: Any] = ["duration": media.durationSeconds, "audioDecodedDuration": media.audio.durationSeconds]
                 for type in [AVMediaType.video, .audio] {
@@ -90,13 +95,19 @@ final class CapturePauseProbe {
                     let output = AVAssetReaderTrackOutput(track: track, outputSettings: settings)
                     output.alwaysCopiesSampleData = false; reader.add(output)
                     guard reader.startReading() else { throw ProbeError("Cannot read media PTS") }
-                    var count = 0, first = Double.infinity, end = 0.0, gap = 0.0
+                    var count = 0, markers = 0, first = Double.infinity, end = 0.0, gap = 0.0
+                    // Preserve real internal empty edits. Leading audio offset
+                    // is allowed and recorded, not silently independently reset.
+                    for segment in track.segments where segment.isEmpty && segment.timeMapping.target.start.seconds > 0.05 {
+                        gap = max(gap, segment.timeMapping.target.duration.seconds)
+                    }
                     while reader.status == .reading {
                         let more: Bool = try autoreleasepool {
                             guard let sample = output.copyNextSampleBuffer() else { return false }
-                            let pts = CMSampleBufferGetPresentationTimeStamp(sample).seconds
-                            let duration = CMSampleBufferGetDuration(sample).seconds
-                            guard pts.isFinite else { throw ProbeError("Invalid media PTS") }
+                            let pts = CMSampleBufferGetOutputPresentationTimeStamp(sample).seconds
+                            let duration = CMSampleBufferGetOutputDuration(sample).seconds
+                            if CMSampleBufferGetNumSamples(sample) == 0 { markers += 1; return true }
+                            guard pts.isFinite else { throw ProbeError("Invalid \(type.rawValue) media PTS in sample \(count)") }
                             if count > 0 { gap = max(gap, pts - end) }
                             first = min(first, pts); end = max(end, pts + (duration.isFinite ? max(0, duration) : 0)); count += 1
                             if let pixel = CMSampleBufferGetImageBuffer(sample) {
@@ -113,7 +124,7 @@ final class CapturePauseProbe {
                         if !more { break }
                     }
                     guard reader.status == .completed, count > 0, gap < (type == .video ? 0.8 : 0.25) else { throw ProbeError("Media read failed or pause left a PTS gap: \(gap)") }
-                    evidence[type.rawValue] = ["firstPTS": first, "endPTS": end, "largestGap": gap, "samples": count]
+                    evidence[type.rawValue] = ["firstPTS": first, "endPTS": end, "largestGap": gap, "samples": count, "controlMarkers": markers]
                 }
                 return evidence
             }
