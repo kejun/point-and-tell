@@ -1,0 +1,9 @@
+<h2>Point &amp; Tell 0.4.0</h2>
+<pre>- Add Sparkle 2.9.6, preserving macOS 11 and Universal support. Official builds check a signed HTTPS feed every 24 hours, expose Check for Updates and Automatic Checks, and require confirmation before installation.
+- Defer automatic offers during recording startup/finalization, transcription, export, screenshots, annotations and modal panels. Interactive updating temporarily locks new work; cancellation or failure restores editing.
+- Save the whole project again before updating or quitting, including text whose earlier autosave failed. Recheck active work and persistence before termination.
+- Embed Sparkle&#x27;s framework and helpers with inside-out signing, preserving executable permissions, symlinks, resources and helper entitlements.
+- Add a main-branch release workflow: native checks, monotonic versions/builds, Ed25519-signed archive/feed, immutable archive URLs and a single fast-forward publication. Missing/mismatched keys stop publication.
+- Add maintainer Keychain/GitHub signing setup, release validation tests, real signature/corruption tests and update/rollback documentation.
+
+This source change does not publish an update-enabled download by itself. Configure signing and run the release workflow. Production old-to-new replacement/relaunch and macOS 11 permission/Keychain behavior still require the device checklist.</pre>
