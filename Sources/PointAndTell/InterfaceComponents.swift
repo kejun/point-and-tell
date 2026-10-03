@@ -77,7 +77,7 @@ final class PrimaryButtonCell: NSButtonCell {
         // Keep AppKit's font and horizontal layout, including vertical centering
         // when its title frame is taller than the text. Draw directly because
         // super.drawTitle applies additional highlighted text dimming.
-        let options: NSStringDrawingOptions = [.usesLineFragmentOrigin, .truncatesLastVisibleLine]
+        let options: NSString.DrawingOptions = [.usesLineFragmentOrigin, .truncatesLastVisibleLine]
         let textBounds = text.boundingRect(with: frame.size, options: options, context: nil)
         let height = min(frame.height, ceil(textBounds.height))
         let textFrame = NSRect(x: frame.minX, y: frame.midY - height / 2,
