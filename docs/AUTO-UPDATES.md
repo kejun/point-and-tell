@@ -49,6 +49,10 @@ bash scripts/setup-updates.sh
 
 ## 每次发布
 
+面向用户的迭代默认交付启用更新的正式安装包。CI 测试产物用于内部验证，
+不能作为已完成正式发布的替代。用户要求测试包时再单独提供；发布完成后核对
+不可变下载地址、安装包签名及更新清单，并将正式下载地址交付用户。
+
 1. 在 main 合入已验证代码；同步 VERSION、Info.plist 的显示版本与递增整数
    CFBundleVersion，以及 CHANGELOG.md 对应版本条目。
 2. GitHub Actions → **Publish signed macOS update** → Run workflow → main，
@@ -77,6 +81,12 @@ gh workflow run release.yml --repo kejun/point-and-tell --ref main
 发布门禁记录 `accepted-on-device` 警告并保留失败产物。其他错误、改变后的应用
 及后续版本仍失败；没有放宽更新签名、保存保护或归档校验。范围与证据见
 [暂停录制验证](PAUSE-RECORDING.md#051-正式发布验收)。
+
+0.5.2 使用独立的[发布决定记录](release-acceptance-0.5.2.json)：用户在获知
+本次双架构 UI 检查通过、Intel 旧探针仍失败后，要求交付正式包。
+仅对该版本 / build 14 的固定应用输入和同一失败允许 `accepted-for-release`，
+日志明确说明它不是探针通过，也不是 0.5.2 真机验收。0.5.1 的设备记录保持原有范围；
+PR、新错误、源码变化及未单独批准的未来版本继续阻止发布。
 
 首次提交的 appcast 是无条目的占位文件；首个正式发布会生成其有效签名。
 在此之前不分发有公钥但没有有效更新源的开发包作为正式版本。

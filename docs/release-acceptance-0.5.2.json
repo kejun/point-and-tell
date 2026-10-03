@@ -1,0 +1,22 @@
+{
+  "version": "0.5.2",
+  "build": "14",
+  "architecture": "x86_64",
+  "date": "2026-10-03",
+  "basis_type": "release-approved-with-known-ci-limitation",
+  "basis": "After being informed that both architecture UI checks passed and the existing Intel pause probe still failed, the user explicitly requested an official package instead of another test package. This is a release decision for the exact 0.5.2 UI changes, not a claim that 0.5.2 was tested on a physical device. The earlier 0.5.1 device feedback and deferred investigation remain separate evidence.",
+  "approved_source_commit": "ec61c1b0f0ec6d057ca45db38234add83ca227a4",
+  "prior_device_evidence": "release-acceptance-0.5.1.json",
+  "ci_evidence": "https://github.com/kejun/point-and-tell/actions/runs/37111683337",
+  "reference_test_archive_sha256": "89ba7aa0ff63e5329bbdf0071a9207cf655548844817cd7d3c57694e2ed7be56",
+  "probe_failure": "Paused magenta screen was written into MOV",
+  "git_objects": {
+    "Sources": "7613e39df45d2baee708f330980cda8c51b4dca1",
+    "Resources": "97792a5757911913b2debad976a0906b14b23a4a",
+    "Package.swift": "15a2191630a571559d7b93bd1dd7fd37951e845f",
+    "Package.resolved": "a7c58f246188ae2111a1cc69eb7989d4ebdd3a39",
+    "VERSION": "cb0c939a936f142669d38cf1ece330266d730965",
+    "scripts/build-app.sh": "62bda18d15fd34b60eef05bacf9985892c427627",
+    "scripts/sparkle-path.py": "6f7cfdc5f24f5a27ec62391e2938290c36011ff9"
+  }
+}

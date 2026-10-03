@@ -11,6 +11,11 @@ import subprocess
 ROOT = Path(__file__).resolve().parent.parent
 INPUTS = ("Sources", "Resources", "Package.swift", "Package.resolved", "VERSION",
           "scripts/build-app.sh", "scripts/sparkle-path.py")
+# Each scope is a separate maintainer decision, not a waiver for later versions.
+APPROVED_SCOPES = {
+    ("0.5.1", "13", "device-verified"): "accepted-on-device",
+    ("0.5.2", "14", "release-approved-with-known-ci-limitation"): "accepted-for-release",
+}
 
 
 def decision(report, exit_code, acceptance, context, identities):
@@ -18,21 +23,24 @@ def decision(report, exit_code, acceptance, context, identities):
         return "passed"
     if exit_code == 77 and report.get("status") == "unavailable":
         return "unavailable"
+    basis_type = acceptance.get("basis_type", "device-verified") if acceptance else None
+    approval = APPROVED_SCOPES.get((context["version"], context["build"], basis_type))
     allowed = (
         acceptance is not None
+        and approval is not None
         and exit_code == 1 and report.get("status") == "failed"
         and report.get("detail") == acceptance["probe_failure"]
         and not report.get("captureError")
         and context["arch"] == acceptance["architecture"] == "x86_64"
-        and context["version"] == acceptance["version"] == "0.5.1"
-        and context["build"] == acceptance["build"] == "13"
+        and context["version"] == acceptance["version"]
+        and context["build"] == acceptance["build"]
         and context["ref"] == "refs/heads/main"
         and context["event"] in ("push", "workflow_dispatch")
         and set(identities) == set(INPUTS)
         and identities == acceptance["git_objects"]
     )
     if allowed:
-        return "accepted-on-device"
+        return approval
     raise ValueError("Capture probe failed without matching device acceptance")
 
 
@@ -40,7 +48,7 @@ def source_identities(root):
     def git(*args):
         return subprocess.check_output(["git", *args], cwd=root, text=True).strip()
     if git("status", "--porcelain", "--untracked-files=all", "--", *INPUTS):
-        raise ValueError("App inputs differ from the committed, device-tested source")
+        raise ValueError("App inputs differ from the committed, approved source")
     return {path: git("rev-parse", "HEAD:" + path) for path in INPUTS}
 
 
@@ -62,6 +70,12 @@ def main():
         message = ("0.5.1 Intel device acceptance applies to the unchanged app inputs. "
                    "The CI probe still FAILED: paused magenta screen was written into MOV. "
                    "Evidence is retained; this is not a probe pass. See docs/PAUSE-RECORDING.md.")
+        print("::warning::" + message)
+    elif result == "accepted-for-release":
+        message = ("0.5.2 release approved with the known Intel CI limitation for these exact app inputs. "
+                   "The CI probe still FAILED: paused magenta screen was written into MOV. "
+                   "Evidence is retained; this is neither a probe pass nor 0.5.2 device verification. "
+                   "See docs/release-acceptance-0.5.2.json.")
         print("::warning::" + message)
     elif result == "unavailable":
         message = "Native capture unavailable on this runner; not verified and not passed."

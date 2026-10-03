@@ -1,10 +1,11 @@
 # Changelog
 
-## 0.5.2 — Unreleased
+## 0.5.2 — 2026-10-03
 
 - Keep primary-action text and symbols white while pressed, with 82% foreground opacity. Draw the title with an explicit foreground in AppKit's title frame and tint its native symbol, avoiding AppKit's additional highlighted text dimming; preserve native layout, focus and accessibility.
 - Activate the application and bring the workspace to the front when recording finishes, restoring a hidden or minimized window. Apply the same presentation to recording failures; keep the recording HUD nonactivating during capture.
 - Extend the native UI fixture with pressed-state screenshots in light/dark appearances and a hidden/inactive application to key/main workspace check. The 0.5.1 Intel device acceptance is not extended to this new source or version.
+- Record the user's separate request to release 0.5.2 with the known Intel CI pause-probe limitation. This source-pinned release decision preserves the failed evidence and does not claim a 0.5.2 device test; all other native, signature and archive checks remain required.
 
 ## 0.5.1 — 2026-10-03
 
