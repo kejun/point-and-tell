@@ -2,6 +2,7 @@
 import AppKit
 import AVFoundation
 import CoreGraphics
+import VideoToolbox
 import PointAndTellCore
 
 /// macOS 11-compatible screen + microphone recording. No frame arrays or unbounded
@@ -410,17 +411,21 @@ final class RecordingEngine: NSObject {
         // is converted to the ASR format later by the existing local AudioChunker.
         movie.setOutputSettings(nil, for: video)
         movie.setOutputSettings(nil, for: audio)
-        // At 5 fps the native preset buffered up to eight reordered frames.
-        // After resume those stale paused-screen frames were actually presented
-        // for 1.8 seconds. Preserve the negotiated format/size/bitrate and audio,
-        // but disallow video frame reordering and provide the actual source rate.
+        // The native encoder may buffer frames even with B frames disabled.
+        // At 5 fps this presented paused-screen frames for 1.6 seconds on Intel.
+        // Bound the compression window as well as disabling reordering, while
+        // retaining the negotiated codec/size/bitrate and hardware selection.
         var videoSettings = movie.outputSettings(for: video)
         if videoSettings[AVVideoCodecKey] != nil {
             var compression = videoSettings[AVVideoCompressionPropertiesKey] as? [String: Any] ?? [:]
             compression[AVVideoAllowFrameReorderingKey] = false
             compression[AVVideoExpectedSourceFrameRateKey] = requestedFPS
+            compression[kVTCompressionPropertyKey_MaxFrameDelayCount as String] = 1
+            compression[kVTCompressionPropertyKey_RealTime as String] = true
             videoSettings[AVVideoCompressionPropertiesKey] = compression
             movie.setOutputSettings(videoSettings, for: video)
+            let applied = movie.outputSettings(for: video)[AVVideoCompressionPropertiesKey] as? [String: Any] ?? [:]
+            traceTransition("encoder compression: \(applied)")
         }
         // Apply start/pause/resume/stop at the movie output's actual audio
         // sample boundary. Only scalar PTS values are observed; no samples are
