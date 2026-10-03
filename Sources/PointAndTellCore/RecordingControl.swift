@@ -49,7 +49,7 @@ public struct RecordingControl {
         pending = nil; phase = .stopping; screenshotEpoch = UUID(); return true
     }
     public mutating func finish() { pending = nil; phase = .idle; screenshotEpoch = UUID() }
-    /// Observe native recordedDuration only. Paused wall time never enters here.
+    /// Observe effective native media time only. Paused wall time never enters here.
     @discardableResult public mutating func observeDuration(_ seconds: Double) -> Double {
         if !phase.freezesClock, seconds.isFinite, seconds >= 0 { duration = max(duration, seconds) }
         return duration

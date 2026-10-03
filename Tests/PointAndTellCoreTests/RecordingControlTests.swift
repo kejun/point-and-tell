@@ -72,6 +72,41 @@ final class RecordingControlTests: XCTestCase {
         XCTAssertEqual(c.observeDuration(5), 5)
         for invalid in [Double.nan, .infinity, -1] { XCTAssertEqual(c.observeDuration(invalid), 5) }
     }
+    func testSampleClockFiftyPausesPreservesRealGapsAndIgnoresPrerollDuration() {
+        var clock = RecordingSampleClock()
+        var sourcePTS = 12345.0
+        for index in 0..<50 {
+            let base = Double(index * 18)
+            clock.beginSegment(at: sourcePTS)
+            clock.observe(pts: sourcePTS + 9.8, sampleDuration: 0.2)
+            XCTAssertEqual(clock.duration, base + 10, accuracy: 0.00001)
+            clock.endSegment(at: sourcePTS + 10)
+            clock.observe(pts: sourcePTS + 39, sampleDuration: 0.2)
+            XCTAssertEqual(clock.duration, base + 10, accuracy: 0.00001)
+            clock.beginSegment(at: sourcePTS + 40)
+            clock.observe(pts: sourcePTS + 42, sampleDuration: 0)
+            XCTAssertEqual(clock.duration, base + 12, accuracy: 0.00001)
+            // A real gap in delivered samples remains on the media timeline.
+            clock.observe(pts: sourcePTS + 47.8, sampleDuration: 0.2)
+            clock.endSegment(at: sourcePTS + 48)
+            XCTAssertEqual(clock.duration, base + 18, accuracy: 0.00001)
+            sourcePTS += 48
+        }
+        clock.endSegment(at: sourcePTS + 100) // Stop while already paused.
+        XCTAssertEqual(clock.duration, 900, accuracy: 0.00001)
+    }
+    func testSampleClockRejectsInvalidAndRegressingPTS() {
+        var clock = RecordingSampleClock()
+        clock.beginSegment(at: .nan); clock.observe(pts: 500, sampleDuration: 1)
+        XCTAssertEqual(clock.duration, 0)
+        clock.beginSegment(at: 100); clock.beginSegment(at: 102)
+        clock.observe(pts: 102, sampleDuration: 0.2)
+        for pts in [Double.nan, .infinity, 99, 101] { clock.observe(pts: pts, sampleDuration: 0.2) }
+        XCTAssertEqual(clock.duration, 2.2, accuracy: 0.00001)
+        clock.endSegment(at: .infinity); clock.endSegment(at: 99)
+        clock.observe(pts: 103, sampleDuration: .nan)
+        XCTAssertEqual(clock.duration, 3)
+    }
     func testPostResumeScreenshotAndRealASROffsetShareCompressedMediaTime() {
         var c = recording(); c.observeDuration(10)
         let pause = request(.pause, &c); c.acknowledge(pause); c.observeDuration(40)

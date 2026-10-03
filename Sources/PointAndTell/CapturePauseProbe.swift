@@ -64,7 +64,11 @@ final class CapturePauseProbe {
         recorder.resume { [weak self] result in
             guard let self = self, self.accept(result) else { return }
             self.note("resumed")
-            self.later(2) { self.markerClock = self.recorder.elapsedSeconds; self.note("marker-after-resume") }
+            self.later(2) {
+                self.markerClock = self.recorder.elapsedSeconds; self.note("marker-after-resume")
+                self.window?.backgroundColor = NSColor(deviceRed: 0.9, green: 0.4, blue: 0.1, alpha: 1)
+                self.later(0.6) { self.window?.backgroundColor = NSColor(deviceRed: 0.1, green: 0.2, blue: 0.8, alpha: 1) }
+            }
             self.later(8) {
                 self.recorder.stop { [weak self] result in
                     guard let self = self else { return }
@@ -96,6 +100,7 @@ final class CapturePauseProbe {
                     output.alwaysCopiesSampleData = false; reader.add(output)
                     guard reader.startReading() else { throw ProbeError("Cannot read media PTS") }
                     var count = 0, markers = 0, first = Double.infinity, end = 0.0, gap = 0.0
+                    var visualMarkerPTS: Double?
                     // Preserve real internal empty edits. Leading audio offset
                     // is allowed and recorded, not silently independently reset.
                     for segment in track.segments where segment.isEmpty && segment.timeMapping.target.start.seconds > 0.05 {
@@ -117,6 +122,9 @@ final class CapturePauseProbe {
                                 if let base = CVPixelBufferGetBaseAddress(pixel)?.assumingMemoryBound(to: UInt8.self) {
                                     let i = y * CVPixelBufferGetBytesPerRow(pixel) + x * 4
                                     if base[i] > 130 && base[i + 1] < 100 && base[i + 2] > 130 { throw ProbeError("Paused magenta screen was written into MOV") }
+                                    if base[i] < 80 && base[i + 1] > 50 && base[i + 1] < 180 && base[i + 2] > 180 {
+                                        visualMarkerPTS = visualMarkerPTS ?? pts
+                                    }
                                 }
                             }
                             return true
@@ -124,6 +132,12 @@ final class CapturePauseProbe {
                         if !more { break }
                     }
                     guard reader.status == .completed, count > 0, gap < (type == .video ? 0.8 : 0.25) else { throw ProbeError("Media read failed or pause left a PTS gap: \(gap)") }
+                    if type == .video {
+                        guard let visualPTS = visualMarkerPTS, abs(visualPTS - self.markerClock) < 0.5 else {
+                            throw ProbeError("Post-resume visual marker differs from screenshot clock: \(String(describing: visualMarkerPTS)) vs \(self.markerClock)")
+                        }
+                        evidence["visualMarkerPTS"] = visualPTS
+                    }
                     evidence[type.rawValue] = ["firstPTS": first, "endPTS": end, "largestGap": gap, "samples": count, "controlMarkers": markers]
                 }
                 return evidence

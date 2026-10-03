@@ -816,18 +816,16 @@ private final class CaptureBoundaryController: NSObject, AVCaptureFileOutputDele
     private let lock = NSLock()
     private weak var receiver: RecordingEngine?
     private var pending: Command?
-    private var segmentStart: Double?
-    private var completedDuration = 0.0
-    private var duration = 0.0
+    private var clock = RecordingSampleClock()
     private var cancelled = false
     init(receiver: RecordingEngine) { self.receiver = receiver }
-    var elapsedSeconds: Double { lock.lock(); defer { lock.unlock() }; return duration }
+    var elapsedSeconds: Double { lock.lock(); defer { lock.unlock() }; return clock.duration }
     func request(_ command: Command) {
         lock.lock(); defer { lock.unlock() }
         if !cancelled { pending = command }
     }
     func cancel() { lock.lock(); cancelled = true; pending = nil; lock.unlock() }
-    func captureOutputShouldProvideSampleAccurateRecordingStart(_ output: AVCaptureOutput) -> Bool { true }
+    func fileOutputShouldProvideSampleAccurateRecordingStart(_ output: AVCaptureFileOutput) -> Bool { true }
     func fileOutput(_ output: AVCaptureFileOutput, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
                     from connection: AVCaptureConnection) {
         guard connection.inputPorts.contains(where: { $0.mediaType == .video }) else { return }
@@ -838,15 +836,11 @@ private final class CaptureBoundaryController: NSObject, AVCaptureFileOutputDele
         guard !cancelled else { lock.unlock(); return }
         let command = pending; pending = nil
         switch command {
-        case .start?, .resume?: segmentStart = pts
-        case .pause?, .stop?:
-            if let start = segmentStart { completedDuration += max(0, pts - start) }
-            segmentStart = nil
+        case .start?, .resume?: clock.beginSegment(at: pts)
+        case .pause?, .stop?: clock.endSegment(at: pts)
         case nil: break
         }
-        if let start = segmentStart {
-            duration = max(duration, completedDuration + max(0, pts - start) + (sampleDuration.isFinite ? max(0, sampleDuration) : 0))
-        } else { duration = max(duration, completedDuration) }
+        clock.observe(pts: pts, sampleDuration: sampleDuration)
         lock.unlock()
         switch command {
         case .start(let url)?: if let receiver = receiver { output.startRecording(to: url, recordingDelegate: receiver) }
