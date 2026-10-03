@@ -681,7 +681,8 @@ extension RecordingEngine: AVCaptureFileOutputRecordingDelegate {
         queue.async {
             guard self.output === output, self.destination == fileURL else { return }
             if self.phase == .stopping { output.stopRecording(); return }
-            guard self.phase == .starting else { return }
+            guard self.phase == .starting, !self.movieDidStart else { return }
+            self.boundaryController?.confirmStart()
             self.movieDidStart = true
             self.audioInactiveSince = nil
             self.refreshMicrophoneStatus()
@@ -818,11 +819,22 @@ private final class CaptureBoundaryController: NSObject, AVCaptureFileOutputDele
     private weak var receiver: RecordingEngine?
     private var pending: Command?
     private var clock = RecordingSampleClock()
+    private var latestPTS: Double?
     private var trace: [String] = []
     private var cancelled = false
     init(receiver: RecordingEngine) { self.receiver = receiver }
     var elapsedSeconds: Double { lock.lock(); defer { lock.unlock() }; return clock.duration }
     var diagnostics: [String] { lock.lock(); defer { lock.unlock() }; return trace }
+    func confirmStart() {
+        lock.lock(); defer { lock.unlock() }
+        guard !cancelled, let pts = latestPTS else { return }
+        // startRecording may prepare the encoder before writing its first
+        // sample, even in sample-accurate mode. The first didStart callback
+        // establishes the file origin from the current media sample, not time
+        // spent preparing the output. No wall-clock offset is introduced.
+        trace.append("file start confirmed; pts=\(pts); preparation=\(clock.duration)")
+        clock = RecordingSampleClock(); clock.beginSegment(at: pts)
+    }
     func request(_ command: Command) {
         lock.lock(); defer { lock.unlock() }
         if !cancelled { pending = command }
@@ -839,6 +851,7 @@ private final class CaptureBoundaryController: NSObject, AVCaptureFileOutputDele
         guard pts.isFinite else { return }
         lock.lock()
         guard !cancelled else { lock.unlock(); return }
+        latestPTS = pts
         let command = pending; pending = nil
         if let command = command {
             let name: String

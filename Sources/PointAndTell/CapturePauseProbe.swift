@@ -163,6 +163,7 @@ final class CapturePauseProbe {
                 guard chunks.count == 1, let chunk = chunks.first,
                       abs(chunk.durationSeconds - 18) < 1.2 else { self.finish("failed", detail: "Extracted WAV retained a pause gap", code: 1); return }
                 self.events.append(["wavDuration": chunk.durationSeconds, "wavStart": chunk.startSeconds])
+                self.events.append(["firstCaptureTransitions": self.recorder.transitionDiagnostics])
                 self.verifyPausedStop()
             }
         }

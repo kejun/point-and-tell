@@ -30,7 +30,8 @@ public struct RecordingControl {
     }
     public mutating func configured() { if phase == .permissions { phase = .starting } }
     @discardableResult public mutating func started() -> Bool {
-        guard phase == .starting else { return false }; phase = .recording; return true
+        guard phase == .starting else { return false }
+        duration = 0; phase = .recording; return true
     }
     public mutating func request(_ kind: Kind) -> Request {
         if (kind == .pause && phase == .paused) || (kind == .resume && phase == .recording) { return .unchanged }
