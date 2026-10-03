@@ -72,6 +72,12 @@ gh workflow run release.yml --repo kejun/point-and-tell --ref main
 发布 job 获得 contents:write。若分支保护要求 PR，push 会失败，不自动绕过。
 未发布的失败运行可以修正后重试；已发布版本必须递增版本号和 build number。
 
+0.5.1 的用户 Intel 真机验收已记录在 [发布验收记录](release-acceptance-0.5.1.json)。
+原生探针继续执行；仅对完全一致的应用输入和已知 Intel 暂停画面失败，
+发布门禁记录 `accepted-on-device` 警告并保留失败产物。其他错误、改变后的应用
+及后续版本仍失败；没有放宽更新签名、保存保护或归档校验。范围与证据见
+[暂停录制验证](PAUSE-RECORDING.md#051-正式发布验收)。
+
 首次提交的 appcast 是无条目的占位文件；首个正式发布会生成其有效签名。
 在此之前不分发有公钥但没有有效更新源的开发包作为正式版本。
 

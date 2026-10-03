@@ -1,5 +1,7 @@
 # Download Point & Tell
 
+For the latest signed-update Universal installer, use the [current download on the project home page](../README.md#download). That link is updated atomically with the signed update feed only after publication succeeds. Each version directory contains the installer, SHA-256 checksum, source/build manifest and release notes. Older packages below remain available for rollback.
+
 ## v0.3.3 · Delete cards and consistent primary buttons · Universal · macOS 11.0+
 
 [Download v0.3.3](v0.3.3/Point-and-Tell-v0.3.3-macOS-universal.zip?raw=true)

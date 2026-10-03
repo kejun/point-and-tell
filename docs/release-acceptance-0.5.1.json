@@ -1,0 +1,21 @@
+{
+  "version": "0.5.1",
+  "build": "13",
+  "architecture": "x86_64",
+  "date": "2026-10-03",
+  "basis": "User tested the 0.5.1 Universal package on a physical Intel Mac, reported no problems, requested closure of #12, and requested the official 0.5.1 release. This accepts the known CI difference for this source only; no detailed probe or performance matrix was supplied.",
+  "issue": "https://github.com/kejun/point-and-tell/issues/12",
+  "tested_source_commit": "1d41ba553bd5b8cc8c3b6f174d98089d7915b821",
+  "tested_archive_sha256": "def66753b6c7d7d7ff463c0c667ff5590fc93ff8584af32c12081fd186646e4a",
+  "ci_evidence": "https://github.com/kejun/point-and-tell/actions/runs/37104362726",
+  "probe_failure": "Paused magenta screen was written into MOV",
+  "git_objects": {
+    "Sources": "976f132d2ccdac1288460a656ea8b9a0af5df3c3",
+    "Resources": "9c27bfcb55964bd1cd3d38154fa0e10d1830056a",
+    "Package.swift": "15a2191630a571559d7b93bd1dd7fd37951e845f",
+    "Package.resolved": "a7c58f246188ae2111a1cc69eb7989d4ebdd3a39",
+    "VERSION": "4b9fcbec101a6ff8ec68e0f95131ccda4861407f",
+    "scripts/build-app.sh": "62bda18d15fd34b60eef05bacf9985892c427627",
+    "scripts/sparkle-path.py": "6f7cfdc5f24f5a27ec62391e2938290c36011ff9"
+  }
+}

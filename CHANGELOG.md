@@ -6,7 +6,8 @@
 - Preserve exact source text slices and real word/sentence timing. Text-only subdivisions retain their enclosing sentence interval instead of inventing word times.
 - Add first/last passage moves between adjacent cards, with atomic persistence and protection against busy operations or failed writes. Preserve source references, images, manual timing, edits and deleted-card decisions.
 - Reopen existing projects to regenerate untouched automatic cards without another transcription/upload.
-- Add exact-coverage, Unicode, long-transcript, migration, edit/reopen/export and native movement regressions. The separate Intel pause-media investigation remains deferred; this change does not certify that capture path.
+- Add exact-coverage, Unicode, long-transcript, migration, edit/reopen/export and native movement regressions.
+- Record the user's successful 0.5.1 physical Intel test and release acceptance. The known Intel CI pause-screen failure remains visible in its original evidence; a source-pinned acceptance allows this release only. Other failures, changed app inputs and later versions still block release. See docs/PAUSE-RECORDING.md for the verification boundary.
 
 ## 0.5.0 — 2026-10-03
 

@@ -69,17 +69,8 @@ jobs:
           set +e
           "dist/Point & Tell.app/Contents/MacOS/PointAndTell" --capture-pause-probe "$PWD/dist/capture-pause-probe"
           result=$?
-          if [[ "$result" == "77" ]]; then
-            echo "::notice::Native capture unavailable on this runner; results.json records this as unverified, not passed."
-          elif [[ "$result" != "0" ]]; then
-            exit "$result"
-          fi
-          python3 - <<'PY'
-          import json
-          from pathlib import Path
-          report = json.loads(Path('dist/capture-pause-probe/results.json').read_text())
-          assert report['status'] in ('passed', 'unavailable'), report
-          PY
+          set -e
+          python3 scripts/check_capture_probe.py dist/capture-pause-probe/results.json "$result"
       - name: Verify offline HTML in WebKit
         timeout-minutes: 2
         run: swift scripts/verify-export.swift "$PWD/dist/ui-smoke/timeline.html" "$PWD/dist/ui-smoke"

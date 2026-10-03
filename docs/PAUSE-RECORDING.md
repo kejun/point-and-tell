@@ -33,7 +33,13 @@ UI fixture 检查各状态工具条和更新保护；鼠标事件检查冻结笔
 
 PR #14 与 #16 已合入 main，源码 0.5.1 / build 13。北京时间 15:04，用户在收到 0.5.1 Universal 测试包后反馈 Intel 真机实际测试完全没有问题，记录为用户设备使用通过。
 
-这项反馈与自动化结果分别保留：[CI 37104362726](https://github.com/kejun/point-and-tell/actions/runs/37104362726) 的 arm64 任务全部通过，Intel 的 182 项核心测试、Universal 构建、更新安全、AAC 和 UI 通过，但暂停探针仍报告暂停画面写入 MOV。用户选择暂缓该 CI 差异调查；探针未跳过或降低标准，继续在 [#12](https://github.com/kejun/point-and-tell/issues/12) 跟踪。此次反馈没有附带具体系统配置或逐项 probe/性能日志，下面的细分检查不因此自动全部勾选。
+这项反馈与自动化结果分别保留：[CI 37104362726](https://github.com/kejun/point-and-tell/actions/runs/37104362726) 的 arm64 任务全部通过，Intel 的 182 项核心测试、Universal 构建、更新安全、AAC 和 UI 通过，但暂停探针仍报告暂停画面写入 MOV。用户选择暂缓该 CI 差异调查，随后明确确认 0.5.1 真机无问题并要求关闭 [#12](https://github.com/kejun/point-and-tell/issues/12)，该 issue 已按用户验收关闭。此次反馈没有附带具体系统配置或逐项 probe/性能日志，下面的细分检查不因此自动全部勾选。
+
+### 0.5.1 正式发布验收
+
+用户随后要求发布 0.5.1 正式版。[验收记录](release-acceptance-0.5.1.json) 固定了已测试包的 SHA-256、源提交和全部应用源码、资源、依赖及打包脚本的 Git 对象标识。main 的 CI 和正式发布仍运行原探针；仅当版本为 0.5.1 / build 13、运行于 Intel、应用输入完全一致，且唯一报告为 `Paused magenta screen was written into MOV`、没有采集错误时，发布门禁接受用户真机验收。原 `results.json` 仍为 `failed`，任务摘要和日志明确显示 `accepted-on-device` 警告，媒体和报告继续作为 CI 产物保存。
+
+这不是修复或探针通过，也不会推广到 Apple Silicon、新错误、PR、未来版本或改变后的应用代码。缺失报告、崩溃、非预期退出码、音频/时间戳错误继续失败。编译、核心测试、UI、导出、更新替换、签名及不可覆盖归档等其他门禁均保留。发布工具的回归测试覆盖验收范围和失效条件；不改变项目数据或录制逻辑。
 
 ### 实录发现及路线调整
 
