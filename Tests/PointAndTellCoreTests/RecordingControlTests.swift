@@ -72,6 +72,19 @@ final class RecordingControlTests: XCTestCase {
         XCTAssertEqual(c.observeDuration(5), 5)
         for invalid in [Double.nan, .infinity, -1] { XCTAssertEqual(c.observeDuration(invalid), 5) }
     }
+    func testPostResumeScreenshotAndRealASROffsetShareCompressedMediaTime() {
+        var c = recording(); c.observeDuration(10)
+        let pause = request(.pause, &c); c.acknowledge(pause); c.observeDuration(40)
+        let resume = request(.resume, &c); c.acknowledge(resume); c.observeDuration(12)
+        let image = VisualAnchor(timestamp: c.duration, imageRelativePath: "frames/resumed.png", kind: .bookmark)
+        let source = ASRSentence(text: "恢复后的讲解", beginTimeMilliseconds: 1000, endTimeMilliseconds: 2000,
+            words: [ASRWord(text: "恢复后的讲解", beginTimeMilliseconds: 1000, endTimeMilliseconds: 2000)])
+        let segment = source.transcriptSegment(chunkOffset: 11)
+        let cards = ScreenshotCardMatcher.cards(anchors: [image], transcripts: [segment])
+        XCTAssertEqual(image.timestamp, 12)
+        XCTAssertEqual(cards.first?.startSeconds, 12); XCTAssertEqual(cards.first?.endSeconds, 13)
+        XCTAssertEqual(cards.first?.association?.matches.first?.offsetSeconds, 0)
+    }
     func testPausedCrashRecoveryAndUpdateProtection() throws {
         let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         defer { try? FileManager.default.removeItem(at: root) }
