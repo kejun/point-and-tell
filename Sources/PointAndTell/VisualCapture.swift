@@ -67,6 +67,8 @@ enum VisualCapture {
 final class DrawingCanvas: NSView {
     let image: CGImage
     private var strokes: [[NSPoint]] = []
+    var isFrozen = false { didSet { acceptingStroke = false } }
+    private var acceptingStroke = false
     init(image: CGImage, frame: NSRect) { self.image = image; super.init(frame: frame) }
     required init?(coder: NSCoder) { fatalError("init(coder:) is not used") }
     override var acceptsFirstResponder: Bool { true }
@@ -95,8 +97,9 @@ final class DrawingCanvas: NSView {
             path.stroke()
         }
     }
-    override func mouseDown(with event: NSEvent) { strokes.append([convert(event.locationInWindow, from: nil)]); needsDisplay = true }
-    override func mouseDragged(with event: NSEvent) { guard !strokes.isEmpty else { return }; strokes[strokes.count - 1].append(convert(event.locationInWindow, from: nil)); needsDisplay = true }
+    override func mouseDown(with event: NSEvent) { guard !isFrozen else { return }; acceptingStroke = true; strokes.append([convert(event.locationInWindow, from: nil)]); needsDisplay = true }
+    override func mouseDragged(with event: NSEvent) { guard !isFrozen, acceptingStroke, !strokes.isEmpty else { return }; strokes[strokes.count - 1].append(convert(event.locationInWindow, from: nil)); needsDisplay = true }
+    override func mouseUp(with event: NSEvent) { acceptingStroke = false }
     func undoStroke() { if !strokes.isEmpty { strokes.removeLast(); needsDisplay = true } }
     func clearStrokes() { strokes.removeAll(); needsDisplay = true }
     func bakedImage() throws -> CGImage {
@@ -158,6 +161,10 @@ final class DrawingOverlay: NSObject {
         canvas.onCancel = { [weak self] in self?.cancel() }
     }
     private func button(_ title: String, _ action: Selector) -> NSButton { NSButton(title: title, target: self, action: action) }
+    func setFrozen(_ frozen: Bool) {
+        if canvas.isFrozen != frozen { canvas.isFrozen = frozen }
+        controls.title = frozen ? "录制已暂停或正在切换 · 可保存/取消现有标注" : "标注冻结截图 · 语音继续录制"
+    }
     func show() {
         window.makeKeyAndOrderFront(nil)
         window.makeFirstResponder(canvas)
@@ -228,7 +235,13 @@ extension DrawingOverlay {
         try stroke(); try require(overlay.canvas.strokeCount == 1, "Mouse drag did not draw")
         try click("撤销"); try require(overlay.canvas.strokeCount == 0, "Undo failed")
         try stroke(); try click("清空"); try require(overlay.canvas.strokeCount == 0, "Clear failed")
-        try stroke(); try click("保存并继续"); overlay.done()
+        try stroke()
+        overlay.setFrozen(true); try stroke()
+        try require(overlay.canvas.strokeCount == 1, "Pause lost or added a stroke")
+        overlay.setFrozen(false); try stroke()
+        try require(overlay.canvas.strokeCount == 2, "Resume did not restore drawing")
+        overlay.setFrozen(true)
+        try click("保存并继续"); overlay.done()
         try require(completions == 1 && saved != nil, "Save must finish exactly once")
         try require(!overlay.window.isVisible && !overlay.controls.isVisible && toolbar.isVisible, "Pen cleanup hid the recording HUD")
         if let saved = saved {

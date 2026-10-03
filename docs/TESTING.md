@@ -1,5 +1,7 @@
 # Verification
 
+Pause/resume (#12) adds 50-cycle core and native fake-output checks, transition timeout/Stop/delegate races, paused HUD and drawing checks, final video decode validation, and an opt-in native 10+30+8-second capture probe. See [PAUSE-RECORDING.md](PAUSE-RECORDING.md) for checks and remaining Big Sur/device/performance acceptance. An unavailable probe is unverified, not passed.
+
 ## Automated
 
 `swift test` covers ASR schema, WAV guards/chunking, JSON/SSE finalization, cancellation, missing timing, exact offset addition, frame priority/multiple frames, persistence recovery, path traversal/symlinks, malformed files, Unicode/HTML escaping and self-contained exports. Network calls use stubs; no API key or billed request is required.

@@ -55,6 +55,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private var idleButtons: [NSButton] = []
     private var startButton: NSButton!
     private var stopButton: NSButton!
+    private var pauseButton: NSButton!
+    private var markButton: NSButton!
+    private var penButton: NSButton!
     private var cancelASRButton: NSButton!
     private var store: ProjectStore?
     private var project: ProjectManifest?
@@ -66,10 +69,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private var drawing: DrawingOverlay?
     private var timer: Timer?
     private var selectedDisplay: CGDirectDisplayID = CGMainDisplayID()
-    private var pendingScreenshot = false
+    private var pendingScreenshot: UUID?
+    private var recordingMetadataSaveFailed = false
     private var processingBusy = false
     private var updateController: UpdateController?
-    private var busy: Bool { processingBusy || (updateController?.blocksWork ?? false) }
+    private var busy: Bool { processingBusy || drawing != nil || (updateController?.blocksWork ?? false) }
     private var cancelRequested = false
     private var activeChunkID: UUID?
     private var workflowReady = false
@@ -77,12 +81,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private var setupController: SetupWindowController?
     private var automaticGate = AutomaticTranscriptionGate()
     private var automaticTranscription = false
+    private var capturePauseProbe: CapturePauseProbe?
     private var hotKey: EventHotKeyRef?
     private var eventHandler: EventHandlerRef?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         makeMenu(); makeWindow(); makeToolbar(); installShortcut()
         recorder.onFailure = { [weak self] error in self?.recordingFailed(error) }
+        if let index = CommandLine.arguments.firstIndex(of: "--capture-pause-probe"), CommandLine.arguments.indices.contains(index + 1) {
+            isTestMode = true
+            capturePauseProbe = CapturePauseProbe(directory: URL(fileURLWithPath: CommandLine.arguments[index + 1])) { exit($0) }
+            capturePauseProbe?.start(); return
+        }
         if let index = CommandLine.arguments.firstIndex(of: "--smoke-test"), CommandLine.arguments.indices.contains(index + 1) {
             isTestMode = true; workflowReady = true; updateInterface()
             window.makeKeyAndOrderFront(nil); NSApp.activate(ignoringOtherApps: true)
@@ -90,6 +100,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         }
         if let index = CommandLine.arguments.firstIndex(of: "--audio-smoke-test"), CommandLine.arguments.indices.contains(index + 1) {
             isTestMode = true
+            do { try RecordingEngine.verifyPauseDriver() }
+            catch { fputs("Pause driver smoke failed: \(error.localizedDescription)\n", stderr); exit(1) }
             AudioChunkerSmokeTest.run(directory: URL(fileURLWithPath: CommandLine.arguments[index + 1])) { result in
                 switch result { case .success(let evidence): print(evidence); exit(0); case .failure(let error): fputs("Audio smoke failed: \(error.localizedDescription)\n", stderr); exit(1) }
             }; return
@@ -289,6 +301,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     self.timerLabel.stringValue = "00:24"
                     self.microphoneLabel.stringValue = "内建麦克风 · −22 dBFS"
                     self.microphoneLevel.doubleValue = -22
+                    for phase in [RecordingControl.Phase.recording, .pausing, .paused, .resuming, .stopping] {
+                        self.applyRecordingControls(phase: phase)
+                        guard self.stopButton.isEnabled == phase.canStop,
+                              self.markButton.isEnabled == phase.canCapture,
+                              self.penButton.isEnabled == phase.canCapture,
+                              self.pauseButton.isEnabled == (phase == .recording || phase == .paused),
+                              !UpdateActivity(recordingBusy: phase.isBusy).canPresentUpdate else { exit(61) }
+                    }
+                    self.applyRecordingControls(phase: .paused)
+                    guard self.pauseButton.title == "继续", self.toolbar.title.contains("已暂停") else { exit(62) }
                     self.toolbar.showForRecording(on: NSScreen.main)
                     guard self.toolbar.isVisible, self.toolbar.recordingVisible,
                           self.toolbar.level == RecordingToolbarPanel.recordingLevel,
@@ -310,6 +332,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     self.toolbar.hideAfterRecording()
                     guard !self.toolbar.isVisible, !self.toolbar.recordingVisible else { exit(23) }
                     print("TOOLBAR_SMOKE_OK · persistent nonactivating HUD, all Spaces/full-screen flags, stopped cleanup")
+                    print("PAUSE_UI_OK · recording/pausing/paused/resuming/stopping buttons and update guards")
                     print("UI_SMOKE_OK · light/dark, compact layout, empty states, save and busy controls")
                     exit(0)
                 } catch { fputs("UI smoke render failed: \(error.localizedDescription)\n", stderr); exit(4) }
@@ -458,7 +481,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
 
     private var updateActivity: UpdateActivity {
         UpdateActivity(recordingBusy: recorder.isBusy, processingBusy: processingBusy,
-                       screenshotPending: pendingScreenshot, annotationOpen: drawing != nil,
+                       screenshotPending: pendingScreenshot != nil, annotationOpen: drawing != nil,
                        modalOpen: NSApp.modalWindow != nil || NSApp.windows.contains { $0.attachedSheet != nil })
     }
     private func installUpdater(start: Bool = true) {
@@ -781,6 +804,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         toolbar = RecordingToolbarPanel()
         stopButton = button("结束录制", #selector(stopRecording)); decorate(stopButton, symbol: "stop.fill")
         stopButton.contentTintColor = .systemRed
+        pauseButton = button("暂停", #selector(toggleRecordingPause)); decorate(pauseButton, symbol: "pause.fill")
+        markButton = button("标记 ⌃⌥M", #selector(mark)); penButton = button("画笔", #selector(pen))
         timerLabel.font = .monospacedDigitSystemFont(ofSize: 20, weight: .medium)
         timerLabel.widthAnchor.constraint(equalToConstant: 68).isActive = true
         microphoneLabel.font = .systemFont(ofSize: 11)
@@ -790,7 +815,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         microphoneLevel.toolTip = "麦克风平均电平，−60 至 0 dBFS；有电平不等于一定是人声"
         microphoneLabel.widthAnchor.constraint(equalToConstant: 215).isActive = true
         microphoneLabel.lineBreakMode = .byTruncatingMiddle
-        let controls = row([InterfaceStyle.symbol("record.circle.fill", size: 14), timerLabel, microphoneLabel, microphoneLevel, button("标记 ⌃⌥M", #selector(mark)), button("画笔", #selector(pen)), stopButton]); controls.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
+        let controls = row([InterfaceStyle.symbol("record.circle.fill", size: 14), timerLabel, microphoneLabel, microphoneLevel, markButton, penButton, pauseButton, stopButton]); controls.edgeInsets = NSEdgeInsets(top: 10, left: 12, bottom: 10, right: 12)
         let background = WindowBackgroundView(); toolbar.contentView = background
         InterfaceStyle.pin(controls, to: background, inset: 0)
     }
@@ -902,10 +927,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     if let id = self.project?.id { self.automaticGate.arm(projectID: id) }
                     self.window.orderOut(nil)
                     let screen = self.screens.first { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == self.selectedDisplay }
-                    self.toolbar.showForRecording(on: screen); self.stopButton.isEnabled = true
+                    self.toolbar.showForRecording(on: screen); self.recordingMetadataSaveFailed = false; self.updateRecordingControls()
                     self.updateMicrophoneMeter()
                     self.timer = Timer.scheduledTimer(withTimeInterval: 0.2, repeats: true) { [weak self] _ in
-                        guard let self = self else { return }; let seconds = Int(self.recorder.elapsedSeconds); self.timerLabel.stringValue = String(format: "%02d:%02d", seconds / 60, seconds % 60); self.updateMicrophoneMeter()
+                        guard let self = self else { return }; let seconds = Int(self.recorder.elapsedSeconds); self.timerLabel.stringValue = String(format: "%02d:%02d", seconds / 60, seconds % 60); self.updateMicrophoneMeter(); self.updateRecordingControls()
                     }
                 case .failure(let error): self.recordingFailed(error)
                 }
@@ -913,8 +938,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         } catch { fail(error) }
     }
     @objc private func stopRecording() {
-        guard recorder.isRecording else { return }
+        guard recorder.canStop else { return }
         if let drawing = drawing, !drawing.done() { return }
+        pendingScreenshot = nil
         stopButton.isEnabled = false; timer?.invalidate(); timer = nil
         project?.captureState = .finishing; project?.recording?.durationSeconds = recorder.elapsedSeconds
         do { try persist() } catch { fail(error) }
@@ -924,12 +950,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             case .success(let movie):
                 self.setBusy(true, status: "录屏已保存，正在本地检查音轨和实际解码电平…")
                 DispatchQueue.global(qos: .utility).async {
-                    let inspection = Result { try AudioInspector.inspect(movieURL: movie) }
+                    let inspection = Result { try RecordingMediaInspector.inspect(movieURL: movie) }
                     let duration = AVURLAsset(url: movie).duration.seconds
                     DispatchQueue.main.async {
                         if duration.isFinite { self.project?.recording?.durationSeconds = duration }
                         switch inspection {
-                        case .success(let report):
+                        case .success(let media):
+                            let report = media.audio
                             self.project?.captureState = .complete
                             self.project?.reconcileScreenshotCards()
                             do { try self.persist() } catch {
@@ -957,10 +984,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             case .failure(let error): self.recordingFailed(error)
             }
         }
+        updateRecordingControls()
     }
     private func recordingFailed(_ error: Error) {
         automaticGate.cancel()
-        timer?.invalidate(); timer = nil; drawing?.cancel(); drawing = nil; toolbar.hideAfterRecording(); window.makeKeyAndOrderFront(nil)
+        timer?.invalidate(); timer = nil; pendingScreenshot = nil
+        if let drawing = drawing, !drawing.done() { drawing.setFrozen(true) }
+        toolbar.hideAfterRecording(); window.makeKeyAndOrderFront(nil)
         project?.recording?.durationSeconds = recorder.elapsedSeconds
         project?.captureState = .interrupted
         let failure = CaptureFailure(stage: .recording, underlying: error)
@@ -1012,11 +1042,67 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         microphoneLevel.doubleValue = min(0, max(-60, power ?? -60))
         let name = status.microphoneName ?? "无麦克风"
         let detail: String
-        if !status.audioConnectionEnabled || !status.audioConnectionActive { detail = "音频连接未就绪" }
+        if ["pausing", "paused", "resuming"].contains(status.phase) {
+            detail = status.phase == "paused" ? "已暂停 · 不写入音频" : (status.phase == "pausing" ? "正在暂停…" : "正在继续…")
+            microphoneLevel.doubleValue = -60
+        }
+        else if !status.audioConnectionEnabled || !status.audioConnectionActive { detail = "音频连接未就绪" }
         else if let power = power { detail = status.microphoneHealth == "noSignal" ? "电平很低，请说话检查" : String(format: "%.0f dBFS", power) }
         else { detail = "等待电平" }
         microphoneLabel.stringValue = name + " · " + detail
         microphoneLabel.toolTip = microphoneLabel.stringValue + (status.microphonePeakPowerDBFS.map { String(format: " · peak %.0f dBFS", $0) } ?? "")
+    }
+
+    @objc private func toggleRecordingPause() {
+        let phase = recorder.capturePhase
+        guard phase == .recording || phase == .paused else { return }
+        pendingScreenshot = nil; drawing?.setFrozen(true)
+        let id = project?.id
+        let completion: (Result<Void, Error>) -> Void = { [weak self] result in
+            guard let self = self, self.project?.id == id else { return }
+            self.updateRecordingControls()
+            switch result {
+            case .success:
+                let confirmed = self.recorder.capturePhase
+                guard confirmed == .recording || confirmed == .paused else { return }
+                self.project?.captureState = confirmed == .paused ? .paused : .recording
+                self.project?.recording?.durationSeconds = self.recorder.elapsedSeconds
+                do { try self.persist(); self.recordingMetadataSaveFailed = false }
+                catch {
+                    self.recordingMetadataSaveFailed = true
+                    self.report("录制状态已生效，但项目保存失败；继续或结束录制时会重试保存。")
+                    self.fail(error)
+                }
+                self.updateRecordingControls()
+            case .failure(let error):
+                // Final interruption/stop owns the alert. Never reopen an old
+                // transition or report a cancelled transition as a new start.
+                if self.recorder.canStop { self.report(error.localizedDescription) }
+            }
+        }
+        if phase == .recording { recorder.pause(completion: completion) }
+        else { recorder.resume(completion: completion) }
+        updateRecordingControls()
+    }
+
+    private func updateRecordingControls() { applyRecordingControls(phase: recorder.capturePhase) }
+    private func applyRecordingControls(phase: RecordingControl.Phase) {
+        pauseButton.isEnabled = phase == .recording || phase == .paused
+        markButton.isEnabled = phase.canCapture && drawing == nil
+        penButton.isEnabled = phase.canCapture && drawing == nil
+        stopButton.isEnabled = phase.canStop
+        drawing?.setFrozen(!phase.canCapture)
+        let label: String
+        switch phase {
+        case .pausing: label = "正在暂停…"
+        case .paused: label = "已暂停"
+        case .resuming: label = "正在继续…"
+        case .stopping: label = "正在结束…"
+        default: label = "录制中"
+        }
+        pauseButton.title = phase == .paused ? "继续" : (phase == .pausing || phase == .resuming ? label : "暂停")
+        pauseButton.image = NSImage(systemSymbolName: phase == .paused ? "play.fill" : "pause.fill", accessibilityDescription: nil)
+        toolbar.title = "Point & Tell · " + label + (recordingMetadataSaveFailed ? " · 项目未保存" : "")
     }
 
     private func closePlayback() {
@@ -1045,12 +1131,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     @objc private func mark() { captureAnchor(draw: false) }
     @objc private func pen() { captureAnchor(draw: true) }
     private func captureAnchor(draw: Bool) {
-        guard recorder.isRecording, !pendingScreenshot, drawing == nil, let store = store, let projectID = project?.id else { return }
+        guard recorder.isRecording, pendingScreenshot == nil, drawing == nil, let store = store, let projectID = project?.id else { return }
         let eventID = UUID()
-        pendingScreenshot = true
+        let token = recorder.screenshotToken
+        pendingScreenshot = eventID
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
-            guard let self = self else { return }; defer { self.pendingScreenshot = false }
-            guard self.recorder.isRecording, self.project?.id == projectID else { return }
+            guard let self = self else { return }; defer { if self.pendingScreenshot == eventID { self.pendingScreenshot = nil } }
+            guard self.recorder.allowsScreenshot(token), self.pendingScreenshot == eventID, self.project?.id == projectID else { return }
             do {
                 let captureStart = self.recorder.elapsedSeconds
                 let visual = try VisualCapture.screen(displayID: self.selectedDisplay, belowWindowID: CGWindowID(self.toolbar.windowNumber))
@@ -1065,7 +1152,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                         guard let self = self, self.project?.id == projectID else { return }
                         if let image = try result.get() { try self.addAnchor(id: eventID, image: image, timestamp: timestamp, kind: .pen, pointer: visual.pointer, endTimestamp: max(timestamp, self.recorder.elapsedSeconds), captureStart: captureStart, captureEnd: captureEnd, annotationStart: annotationStart, store: store) }
                         self.drawing = nil
-                        if self.recorder.isRecording { self.toolbar.orderFrontRegardless() }
+                        if self.recorder.canStop { self.toolbar.orderFrontRegardless(); self.updateRecordingControls() }
+                        else { self.refresh() }
                     }; self.drawing?.show()
                 } else {
                     try self.addAnchor(id: eventID, image: visual.image, timestamp: timestamp, kind: .bookmark, pointer: visual.pointer, captureStart: captureStart, captureEnd: captureEnd, store: store); self.toolbar.orderFrontRegardless()

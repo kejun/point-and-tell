@@ -63,6 +63,17 @@ jobs:
         if: ${{ !cancelled() && steps.package.outcome == 'success' }}
         timeout-minutes: 2
         run: '"dist/Point & Tell.app/Contents/MacOS/PointAndTell" --smoke-test "$PWD/dist/ui-smoke"'
+      - name: Probe native pause when capture permission and hardware are available
+        timeout-minutes: 3
+        run: |
+          set +e
+          "dist/Point & Tell.app/Contents/MacOS/PointAndTell" --capture-pause-probe "$PWD/dist/capture-pause-probe"
+          result=$?
+          if [[ "$result" == "77" ]]; then
+            echo "::notice::Native capture unavailable on this runner; results.json records this as unverified, not passed."
+          elif [[ "$result" != "0" ]]; then
+            exit "$result"
+          fi
       - name: Verify offline HTML in WebKit
         timeout-minutes: 2
         run: swift scripts/verify-export.swift "$PWD/dist/ui-smoke/timeline.html" "$PWD/dist/ui-smoke"
@@ -86,6 +97,7 @@ jobs:
             dist/ui-smoke/timeline.html
             dist/ui-smoke/timeline-bundle/**
             dist/audio-smoke/**/results.json
+            dist/capture-pause-probe/**
             dist/committed-audio-smoke/**/results.json
             dist/committed-ui-smoke/window.png
           if-no-files-found: ignore

@@ -8,7 +8,9 @@ Record your screen while explaining what should change. Mark the important momen
 
 <img src="docs/screenshots/primary-buttons-light.png" width=600>
 
-**Native macOS 11+, Intel + Apple Silicon. Source v0.4.1.** No Electron, local language model, account, server, or database.
+**New in v0.5.0 source:** pause/resume screen and microphone together from the recording toolbar, keeping one MOV. Paused recordings can be ended directly; existing drawings are preserved. See [pause behavior and device verification](docs/PAUSE-RECORDING.md).
+
+**Native macOS 11+, Intel + Apple Silicon. Source v0.5.0.** No Electron, local language model, account, server, or database.
 
 The v0.4.0 source adds signed application updates: automatic checks, a **检查更新…** menu, and download/install/relaunch through Sparkle. Recording, transcription and export defer updates. See [update setup and release instructions](docs/AUTO-UPDATES.md). A signing-configured release is required to activate updating; ordinary unsigned-for-updates development builds keep it disabled.
 

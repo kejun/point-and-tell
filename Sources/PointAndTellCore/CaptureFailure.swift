@@ -5,7 +5,7 @@ import Foundation
 public struct CaptureFailure: LocalizedError {
     public enum Stage: String {
         case permissions, destination, microphoneInput, configuration
-        case sessionStart, movieStart, recording, finalization
+        case sessionStart, movieStart, recording, pausing, resuming, finalization
 
         public var title: String {
             switch self {
@@ -16,6 +16,8 @@ public struct CaptureFailure: LocalizedError {
             case .sessionStart: return "启动采集会话"
             case .movieStart: return "启动录屏文件写入"
             case .recording: return "录制屏幕与麦克风"
+            case .pausing: return "暂停录制"
+            case .resuming: return "恢复录制"
             case .finalization: return "结束并保存录屏"
             }
         }
@@ -30,7 +32,7 @@ public struct CaptureFailure: LocalizedError {
                 return "请检查所选麦克风是否连接，并在系统声音设置中确认输入设备可用。"
             case .configuration, .sessionStart, .movieStart:
                 return "请确认屏幕和麦克风仍可用，退出并重新打开应用后重试。若仍失败，请复制下方诊断信息。"
-            case .recording, .finalization:
+            case .recording, .pausing, .resuming, .finalization:
                 return "请检查设备连接和磁盘空间。已经写入的录屏和截图仍保留在原项目中。"
             }
         }

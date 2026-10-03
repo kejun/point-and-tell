@@ -134,7 +134,9 @@ enum AudioChunkerSmokeTest {
                         abs(format.mSampleRate - Double(fixture.rate)) < 0.01,
                         "\(fixture.name): source is not AAC at the requested native rate")
             let originalDigest = try digest(source)
-            let report = try AudioInspector.inspect(movieURL: source)
+            let media = try RecordingMediaInspector.inspect(movieURL: source)
+            let report = media.audio
+            try require(media.durationSeconds > 0, "Final movie duration is invalid")
             try require(report.audioTrackPresent && report.decodedFrameCount > 0, "\(fixture.name): source inspector lost samples")
             // A reader may omit the empty edit (first PTS is the audio offset)
             // or render it as leading PCM silence (first PTS is near zero).
