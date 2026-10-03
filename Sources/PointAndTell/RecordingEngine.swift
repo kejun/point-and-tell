@@ -298,8 +298,8 @@ final class RecordingEngine: NSObject {
             guard self.output === output, self.destination == fileURL,
                   let ticket = self.control.pending, ticket.operationID == self.operationID,
                   ticket.kind == kind else { return }
-            // Read the final written time before freezing. Resume deliberately
-            // uses AVFoundation's compressed timeline without subtracting pauses.
+            // Read the native boundary clock before freezing. The output delegate
+            // excludes the paused PTS interval once; never subtract it here again.
             if kind == .pause { self.savedElapsed = self.currentDuration() }
             guard self.control.acknowledge(ticket) else { return }
             self.transitionWatchdog?.cancel(); self.transitionWatchdog = nil

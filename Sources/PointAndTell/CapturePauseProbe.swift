@@ -161,7 +161,44 @@ final class CapturePauseProbe {
                 guard chunks.count == 1, let chunk = chunks.first,
                       abs(chunk.durationSeconds - 18) < 1.2 else { self.finish("failed", detail: "Extracted WAV retained a pause gap", code: 1); return }
                 self.events.append(["wavDuration": chunk.durationSeconds, "wavStart": chunk.startSeconds])
-                self.finish("passed", detail: "Real native 10s + 30s pause + 8s; MOV/PTS/WAV inspected. No ASR. Human audio/visual sync and Big Sur remain separate device checks.", code: 0)
+                self.verifyPausedStop()
+            }
+        }
+    }
+    private func verifyPausedStop() {
+        recorder.start(displayID: CGMainDisplayID(), fps: 5,
+                       outputURL: directory.appendingPathComponent("paused-stop.mov")) { [weak self] result in
+            guard let self = self, self.accept(result) else { return }
+            self.later(1.5) {
+                self.recorder.pause { result in
+                    guard self.accept(result) else { return }
+                    let clock = self.recorder.elapsedSeconds
+                    self.later(1) {
+                        guard abs(self.recorder.elapsedSeconds - clock) < 0.001 else {
+                            self.finish("failed", detail: "Second paused clock advanced", code: 1); return
+                        }
+                        self.recorder.stop { result in
+                            switch result {
+                            case .failure(let error): self.finish("failed", detail: error.localizedDescription, code: 1)
+                            case .success(let url):
+                                DispatchQueue.global(qos: .utility).async {
+                                    let checked = Result { try RecordingMediaInspector.inspect(movieURL: url) }
+                                    DispatchQueue.main.async {
+                                        switch checked {
+                                        case .failure(let error): self.finish("failed", detail: error.localizedDescription, code: 1)
+                                        case .success(let media):
+                                            guard abs(media.durationSeconds - clock) < 0.5 else {
+                                                self.finish("failed", detail: "Paused Stop timeline mismatch", code: 1); return
+                                            }
+                                            self.events.append(["pausedStopDuration": media.durationSeconds, "pausedStopClock": clock])
+                                            self.finish("passed", detail: "Real native 10s + 30s pause + 8s; MOV/PTS/WAV and visible marker inspected; paused direct Stop also verified. No ASR. Human audio/visual sync and Big Sur remain separate device checks.", code: 0)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
     }
