@@ -38,9 +38,16 @@ git add "releases/v$VERSION"
 git -c user.name='github-actions[bot]' -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
   commit -m "release: archive Point & Tell v$VERSION"
 ARCHIVE_COMMIT="$(git rev-parse HEAD)"
+# Sparkle 2.9.x writes the appcast *inside* the archives directory (there is no
+# --output flag). When the existing feed already has entries, seed the directory
+# so older items are carried forward; otherwise let Sparkle create a fresh feed.
+if python3 -c 'import xml.etree.ElementTree as E; import sys; sys.exit(0 if E.parse("updates/appcast.xml").findall("./channel/item") else 1)'; then
+  cp updates/appcast.xml "$STAGE/appcast.xml"
+fi
 "$GENERATE" --ed-key-file "$KEY_DIR/key" --maximum-deltas 0 --maximum-versions 0 \
   --download-url-prefix "https://raw.githubusercontent.com/kejun/point-and-tell/$ARCHIVE_COMMIT/releases/v$VERSION/" \
-  --embed-release-notes --output updates/appcast.xml "$STAGE"
+  --embed-release-notes "$STAGE"
+mv "$STAGE/appcast.xml" updates/appcast.xml
 "$SIGN" --ed-key-file "$KEY_DIR/key" --verify updates/appcast.xml
 SIGNATURE="$(python3 scripts/release_support.py verify-feed --archive-commit "$ARCHIVE_COMMIT")"
 swift scripts/update-signing.swift verify "$SPARKLE_PUBLIC_ED_KEY" "$ARCHIVE" "$SIGNATURE"
