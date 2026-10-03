@@ -74,11 +74,16 @@ final class PrimaryButtonCell: NSButtonCell {
         let text = NSMutableAttributedString(attributedString: title)
         text.addAttribute(.foregroundColor, value: foregroundColor,
                           range: NSRange(location: 0, length: text.length))
-        // Keep AppKit's title frame, font and alignment, but draw the attributed
-        // text directly: super.drawTitle applies its own highlighted opacity,
-        // which leaves almost invisible glyphs even after a white source-in tint.
-        text.draw(with: frame, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
-        return frame
+        // Keep AppKit's font and horizontal layout, including vertical centering
+        // when its title frame is taller than the text. Draw directly because
+        // super.drawTitle applies additional highlighted text dimming.
+        let options: NSStringDrawingOptions = [.usesLineFragmentOrigin, .truncatesLastVisibleLine]
+        let textBounds = text.boundingRect(with: frame.size, options: options, context: nil)
+        let height = min(frame.height, ceil(textBounds.height))
+        let textFrame = NSRect(x: frame.minX, y: frame.midY - height / 2,
+                               width: frame.width, height: height)
+        text.draw(with: textFrame, options: options)
+        return textFrame
     }
 
     override func drawImage(_ image: NSImage, withFrame frame: NSRect, in controlView: NSView) {
