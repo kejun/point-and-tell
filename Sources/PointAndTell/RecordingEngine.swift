@@ -94,6 +94,7 @@ final class RecordingEngine: NSObject {
     private var phase: Phase { control.phase }
     private var session: AVCaptureSession?
     private var output: AVCaptureMovieFileOutput?
+    private var boundaryController: CaptureBoundaryController?
     private var operationID: UUID { control.operationID }
     private var startCompletion: ((Result<Void, Error>) -> Void)?
     private var stopCompletions: [(Result<URL, Error>) -> Void] = []
@@ -284,7 +285,8 @@ final class RecordingEngine: NSObject {
                 }
                 self.transitionWatchdog = watchdog
                 self.queue.asyncAfter(deadline: .now() + self.transitionTimeout, execute: watchdog)
-                if kind == .pause { self.output?.pauseRecording() }
+                if let boundary = self.boundaryController { boundary.request(kind == .pause ? .pause : .resume) }
+                else if kind == .pause { self.output?.pauseRecording() }
                 else { self.output?.resumeRecording() }
             }
         }
@@ -408,17 +410,12 @@ final class RecordingEngine: NSObject {
         // is converted to the ASR format later by the existing local AudioChunker.
         movie.setOutputSettings(nil, for: video)
         movie.setOutputSettings(nil, for: audio)
-        // Real pause probes found reordered-frame preroll in each MOV edit:
-        // recordedDuration then led the presented timeline after every resume.
-        // Keep the negotiated codec/dimensions/rate, but disallow B-frame
-        // reordering so screenshot time follows presentation without preroll.
-        var videoSettings = movie.outputSettings(for: video)
-        if videoSettings[AVVideoCodecKey] != nil {
-            var compression = videoSettings[AVVideoCompressionPropertiesKey] as? [String: Any] ?? [:]
-            compression[AVVideoAllowFrameReorderingKey] = false
-            videoSettings[AVVideoCompressionPropertiesKey] = compression
-            movie.setOutputSettings(videoSettings, for: video)
-        }
+        // Apply start/pause/resume/stop at the movie output's actual video
+        // sample boundary. Only scalar PTS values are observed; no samples are
+        // retained, copied, re-encoded or queued by the application.
+        let boundary = CaptureBoundaryController(receiver: self)
+        movie.delegate = boundary
+        boundaryController = boundary
         captureSession.commitConfiguration()
         session = captureSession
         output = movie
@@ -441,7 +438,7 @@ final class RecordingEngine: NSObject {
         // success before the connection is both enabled and active.
         startMicrophoneMonitoring(operationID: id)
         failureStage = .movieStart
-        movie.startRecording(to: url, recordingDelegate: self)
+        boundary.request(.start(url))
         let watchdog = DispatchWorkItem { [weak self] in
             guard let self = self, self.operationID == id, self.phase == .starting else { return }
             self.pendingFailure = CaptureFailure(stage: .movieStart, underlying: EngineError.startTimedOut)
@@ -502,7 +499,8 @@ final class RecordingEngine: NSObject {
         cancelTransition(pendingFailure ?? EngineError.cancelled)
         startWatchdog?.cancel()
         stopMicrophoneMonitoring()
-        if movieDidStart || output?.isRecording == true || output?.isRecordingPaused == true { output?.stopRecording() }
+        if let boundary = boundaryController { boundary.request(.stop) }
+        else if movieDidStart || output?.isRecording == true || output?.isRecordingPaused == true { output?.stopRecording() }
         // Do NOT stop the session until didFinishRecording: stopping it early can
         // prevent movie finalization. A bounded watchdog handles a stuck driver.
         let id = operationID
@@ -531,9 +529,12 @@ final class RecordingEngine: NSObject {
         savedBytes = output?.recordedFileSize ?? savedBytes
         for (center, token) in observations { center.removeObserver(token) }
         observations.removeAll()
+        output?.delegate = nil
+        boundaryController?.cancel()
         session?.stopRunning()
         session = nil
         output = nil
+        boundaryController = nil
         control.finish()
         lastResult = result
         lastErrorText = diagnostic?.diagnosticText
@@ -651,7 +652,10 @@ final class RecordingEngine: NSObject {
 
     private func currentDuration() -> Double {
         guard let movie = output else { return savedElapsed }
-        let seconds = CMTimeGetSeconds(movie.recordedDuration)
+        // On tested macOS outputs recordedDuration includes encoded preroll
+        // removed by MOV edits (over two seconds after one resume). Use the
+        // same output's frame-boundary PTS, not a wall clock or guessed offset.
+        let seconds = boundaryController?.elapsedSeconds ?? CMTimeGetSeconds(movie.recordedDuration)
         savedElapsed = control.observeDuration(seconds)
         return savedElapsed
     }
@@ -802,6 +806,56 @@ private final class PauseFakeMovieOutput: AVCaptureMovieFileOutput {
     func emitPause() { receiver?.fileOutput(self, didPauseRecordingTo: url, from: []) }
     func emitResume() { receiver?.fileOutput(self, didResumeRecordingTo: url, from: []) }
     func emitFinish() { receiver?.fileOutput(self, didFinishRecordingTo: url, from: [], error: nil) }
+}
+
+/// macOS file-output delegate: a single pending command and scalar media clock.
+/// The delegate callback has no specified queue. Its small lock never surrounds
+/// AVFoundation calls and never synchronously enters the engine's serial queue.
+private final class CaptureBoundaryController: NSObject, AVCaptureFileOutputDelegate {
+    enum Command { case start(URL), pause, resume, stop }
+    private let lock = NSLock()
+    private weak var receiver: RecordingEngine?
+    private var pending: Command?
+    private var segmentStart: Double?
+    private var completedDuration = 0.0
+    private var duration = 0.0
+    private var cancelled = false
+    init(receiver: RecordingEngine) { self.receiver = receiver }
+    var elapsedSeconds: Double { lock.lock(); defer { lock.unlock() }; return duration }
+    func request(_ command: Command) {
+        lock.lock(); defer { lock.unlock() }
+        if !cancelled { pending = command }
+    }
+    func cancel() { lock.lock(); cancelled = true; pending = nil; lock.unlock() }
+    func captureOutputShouldProvideSampleAccurateRecordingStart(_ output: AVCaptureOutput) -> Bool { true }
+    func fileOutput(_ output: AVCaptureFileOutput, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
+                    from connection: AVCaptureConnection) {
+        guard connection.inputPorts.contains(where: { $0.mediaType == .video }) else { return }
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
+        let sampleDuration = CMSampleBufferGetDuration(sampleBuffer).seconds
+        guard pts.isFinite else { return }
+        lock.lock()
+        guard !cancelled else { lock.unlock(); return }
+        let command = pending; pending = nil
+        switch command {
+        case .start?, .resume?: segmentStart = pts
+        case .pause?, .stop?:
+            if let start = segmentStart { completedDuration += max(0, pts - start) }
+            segmentStart = nil
+        case nil: break
+        }
+        if let start = segmentStart {
+            duration = max(duration, completedDuration + max(0, pts - start) + (sampleDuration.isFinite ? max(0, sampleDuration) : 0))
+        } else { duration = max(duration, completedDuration) }
+        lock.unlock()
+        switch command {
+        case .start(let url)?: if let receiver = receiver { output.startRecording(to: url, recordingDelegate: receiver) }
+        case .pause?: output.pauseRecording()
+        case .resume?: output.resumeRecording()
+        case .stop?: output.stopRecording()
+        case nil: break
+        }
+    }
 }
 
 #endif
