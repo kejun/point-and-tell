@@ -8,15 +8,15 @@
 
 ## 1 阅读范围与版本快照
 
-主线及待合入分支最后核查：2026-10-03 03:22 UTC。源码引用固定到提交，不随分支移动；PR 和 CI 链接反映对应提交的历史证据。本文只新增文档，不修改功能、发布版本或合并开发分支。
+主线及待合入分支最后核查：2026-10-03 03:28 UTC。源码引用固定到提交，不随分支移动；PR 和 CI 链接反映对应提交的历史证据。本文只新增文档，不修改功能、发布版本或合并开发分支。
 
 | 层次 | 核查对象 | 可以据此说明什么 |
 | --- | --- | --- |
 | 当前 main | `1ff2b1d6ec1aa24ed8ac824178e9ca005d3d3ea6`，源码 0.4.1 / build 11 | 本文未特别标明的实际链路；#13 已合入截图优先卡片 |
-| 待合入暂停方案 | [PR #14][pr14]，最新观察头 `c58d2fb2e3efd9b261b4d39339d0bacd0c192765`；另保留前一审阅头 `02f151eba1e18a7357e6a93f7c5b85d0991fb1d2` 的失败证据，源码 0.5.0 / build 12 | 第 9 节中的拟议状态、代码与该提交 CI；不能当作 main 已有功能 |
+| 待合入暂停方案 | [PR #14][pr14]，发布前最新观察头 `b57ab275a0e14f469294c7140b085cd5f1861bcf`；时钟变更审阅 `c58d2fb2e3efd9b261b4d39339d0bacd0c192765`；另保留此前审阅头 `02f151eba1e18a7357e6a93f7c5b85d0991fb1d2` 的失败证据，源码 0.5.0 / build 12 | 第 9 节中的拟议状态、代码与该提交 CI；不能当作 main 已有功能 |
 | 已分发包 | `releases/v0.4.0/`，0.4.0 / build 10；构建来源 `2545e0d487f5f2d44918977aa43dc7a89766404f` | [build.json][release-manifest] 与 [更新清单][appcast] 证明分发版本；不代表用户实际安装版本 |
 
-main 的 [CI 37089818034][main-ci] 已成功。PR #14 的历史审阅提交 `02f151e` 对应 [CI 37092097945][pause-ci] 失败；最新观察头 `c58d2fb` 的 [CI 37092800518][pause-latest-ci] 在上述核查时仍运行中，不能把旧提交失败直接当作新头结果，详情见第 9 节。仓库使用 `releases/` 目录分发，不能仅用 GitHub Releases 页面有无条目判断是否已发布。
+main 的 [CI 37089818034][main-ci] 已成功。PR #14 的历史审阅提交 `02f151e` 对应 [CI 37092097945][pause-ci] 失败；`c58d2fb` 的 [CI 37092800518][pause-latest-ci] 与最新头 `b57ab27` 的 [CI 37093004240][pause-publish-ci] 均已失败；本文没有将它们的失败自动归为旧漂移根因，详情见第 9 节。仓库使用 `releases/` 目录分发，不能仅用 GitHub Releases 页面有无条目判断是否已发布。
 
 证据等级：
 
@@ -315,7 +315,7 @@ Ed25519 的更新包 / 清单签名、Apple 代码签名、公证是三件事。
 
 ## 9 PR 14 的暂停链路与当前证据
 
-以下分别记录 [PR #14][pr14] 的 `02f151e` 历史实现 / 失败，以及最新观察头 `c58d2fb` 的代码变更。main 和已分发 0.4.0 均不能据此宣称支持暂停。
+以下分别记录 [PR #14][pr14] 的 `02f151e` 历史实现 / 失败，以及`c58d2fb` 的时钟变更以及发布前最新头 `b57ab27` 的增量。main 和已分发 0.4.0 均不能据此宣称支持暂停。
 
 拟议链路：`recording → pausing → paused → resuming → recording`；转换依赖 delegate 确认，8 秒超时，Stop 可从录制 / 暂停 / 转换中抢先进入 stopping。操作 ID、请求 ticket、output / 文件身份、截图 epoch 防止旧回调复活状态。同一个 AVCaptureMovieFileOutput 使用原生 pause / resume，仍只有一个 MOV，不分段合成。[状态控制][pause-control]、[拟议引擎][pause-engine]
 
@@ -336,7 +336,7 @@ PR 此时尝试关闭 H.264 frame reordering 来处理恢复边界 preroll，但
 
 并行开发在 `79601bf` / `c58d2fb` 引入 `CaptureBoundaryController` 与 `RecordingSampleClock`。start / pause / resume / stop 改在同一 movie output 的视频 sample 边界执行；观察标量 PTS，按有效段累计媒体时长，`currentDuration` 优先读取 sample clock，替代旧的 recordedDuration 路径。此前关闭 H.264 frame reordering 的尝试已移除。因此 PR 内尚未更新的说明不能继续作为当前时钟实现依据。[最新引擎][pause-latest-engine]、[最新 sample clock][pause-sample-clock]
 
-最新 probe 增加恢复后两秒的可见颜色标记，检查标记在解码视频中的 PTS 与截图时钟差异小于 0.5 秒；新 core 测试覆盖 50 次 sample-clock 暂停循环。以上是新增实现 / 断言，不是已经通过的真机结论。最新观察 CI 仍运行中；发布本文时保留快照，不无限追逐开发分支，也不宣称旧漂移已经修复。[最新 probe][pause-latest-probe]、[最新 CI][pause-latest-ci]
+最新 probe 增加恢复后两秒的可见颜色标记，检查标记在解码视频中的 PTS 与截图时钟差异小于 0.5 秒；新 core 测试覆盖 50 次 sample-clock 暂停循环。以上是新增实现 / 断言，不是已经通过的真机结论。发布前重新核查时，`c58d2fb` 的 CI 已失败；新头 `b57ab27` 又增加暂停中直接 Stop 的 probe、调整注释与脚本文件模式，其 CI 同样失败。本文未进一步确认这两次失败的阶段，不将其与 `02f151e` 的媒体失败混为一谈。开发分支继续变化，本文保留明确快照，不宣称旧漂移已经修复。[最新 probe][pause-latest-probe]、[最新 CI][pause-latest-ci]
 
 ## 10 从链路发现的问题与最小后续动作
 
@@ -386,7 +386,7 @@ PR 此时尝试关闭 H.264 frame reordering 来处理恢复边界 preroll，但
 
 ### F8 暂停时钟尚未通过拟议功能验收
 
-**P1 · 历史审阅头已有 CI 失败，最新观察头改变实现且待验证。** 详见第 9 节。先核对新提交、真实 probe 与媒体证据，不能因纯状态测试或 Universal 构建成功合并“时间统一已完成”的结论。跟踪 [issue #12][issue12] / [PR #14][pr14]，不新建重复开发任务。
+**P1 · 历史审阅头已有 CI 失败，后续观察头改变实现但 CI 尚未通过。** 详见第 9 节。先核对新提交、真实 probe 与媒体证据，不能因纯状态测试或 Universal 构建成功合并“时间统一已完成”的结论。跟踪 [issue #12][issue12] / [PR #14][pr14]，不新建重复开发任务。
 
 ### F9 导入项目的关联粒度字符串未在 HTML 属性处转义
 
@@ -410,7 +410,7 @@ PR 此时尝试关闭 H.264 frame reordering 来处理恢复边界 preroll，但
 | --- | --- | --- |
 | main core | main CI 中的 Swift core 测试；截图卡片、词句时间、取消 / 错误、持久化、删除与导出 fixture | 不证明物理麦克风、真实服务端或 Big Sur 权限 |
 | main 原生 | 双架构 macOS 15 runners 的 AAC / WAV、AppKit UI、WebKit HTML、Universal 与更新隔离测试 | 不等于 macOS 11.7.11 / 8 GB 实机；不证明生产升级已完成 |
-| PR #14 | 旧头 `02f151e` 的纯状态 / 替身 / 构建步骤通过、实际 probe 失败；最新观察头 `c58d2fb` 待该次 CI 结论 | 不能把 skipped 下游步骤、unavailable 或未到达的断言算通过 |
+| PR #14 | 旧头 `02f151e` 的纯状态 / 替身 / 构建步骤通过、实际 probe 失败；后续 `c58d2fb` / `b57ab27` 运行失败，本文未归因 | 不能把 skipped 下游步骤、unavailable 或未到达的断言算通过 |
 | 本次文档审计 | 固定源码逐链路阅读、已有 CI 读取、Markdown / 链接 / 远端文档核对 | 未运行 macOS 应用、未发真实付费 ASR、未重测上述全部测试 |
 
 本审计 Linux 环境没有 Swift 可执行文件，未在本地重新执行 Swift 测试。CI 结论均引用精确提交的已有运行，文档 PR 自身的检查状态另在 PR 上显示。测试源存在、测试已运行、测试已通过、真实设备通过，必须分别记录。
@@ -524,3 +524,5 @@ PR 此时尝试关闭 H.264 frame reordering 来处理恢复边界 preroll，但
 [pause-latest-engine]: https://github.com/kejun/point-and-tell/blob/c58d2fb2e3efd9b261b4d39339d0bacd0c192765/Sources/PointAndTell/RecordingEngine.swift
 [pause-sample-clock]: https://github.com/kejun/point-and-tell/blob/c58d2fb2e3efd9b261b4d39339d0bacd0c192765/Sources/PointAndTellCore/RecordingSampleClock.swift
 [pause-latest-probe]: https://github.com/kejun/point-and-tell/blob/c58d2fb2e3efd9b261b4d39339d0bacd0c192765/Sources/PointAndTell/CapturePauseProbe.swift
+
+[pause-publish-ci]: https://github.com/kejun/point-and-tell/actions/runs/37093004240
