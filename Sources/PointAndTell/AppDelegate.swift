@@ -262,6 +262,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     self.setBusy(false)
                     try self.verifyUpdateProtection(store: demoStore, directory: directory)
                     try self.verifyScreenshotCards(store: demoStore, image: image)
+                    try self.verifyTranscriptMoves(store: demoStore)
                     self.project?.reviewCards = []; self.editingCardID = nil; self.refresh()
                     guard self.emptyContainer.isHidden == false, !self.exportHTMLButton.isEnabled && !self.exportBundleButton.isEnabled else { exit(10) }
                     try render("project-empty", width: 1080, height: 760)
@@ -415,6 +416,40 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         project?.reconcileScreenshotCards()
         guard project?.reviewCards[1].text == "存储失败仍保留的编辑", project?.reviewCards.count == 3 else { exit(58) }
         print("SCREENSHOT_CARD_UI_OK · independent cards, no automatic frames, atomic manual extraction and failed-save protection")
+    }
+
+    private func verifyTranscriptMoves(store demoStore: ProjectStore) throws {
+        let saved = project, savedStore = store, selected = editingCardID
+        defer { project = saved; store = savedStore; editingCardID = selected; refresh() }
+        let anchors = [3.0, 10, 16].map { VisualAnchor(timestamp: $0, imageRelativePath: "frames/demo.png", kind: .bookmark) }
+        let source = TranscriptSegment(text: "第一张的说明。第二张的说明。第三张的说明。", startSeconds: 1, endSeconds: 19)
+        var fixture = ProjectManifest(title: "Partition UI", anchors: anchors, transcripts: [source], screenshotCardVersion: 1)
+        fixture.reconcileScreenshotCards()
+        project = fixture; store = demoStore; editingCardID = fixture.reviewCards[1].id; refresh()
+        guard project?.reviewCards.allSatisfy({ !$0.text.isEmpty && $0.association?.status == .matched }) == true,
+              actionEnabled(#selector(moveFirstPassageBack)), actionEnabled(#selector(moveLastPassageForward)) else { exit(81) }
+        setBusy(true, status: "分段操作保护验证")
+        guard !actionEnabled(#selector(moveFirstPassageBack)), !actionEnabled(#selector(moveLastPassageForward)) else { exit(82) }
+        setBusy(false, status: "")
+        let before = project, beforeSelection = editingCardID
+        store = ProjectStore(folderURL: demoStore.folderURL.appendingPathComponent("frames/demo.png"))
+        do { try movePassage(toPrevious: true); exit(83) }
+        catch { guard project == before, editingCardID == beforeSelection else { exit(84) } }
+        store = demoStore
+        try movePassage(toPrevious: true)
+        guard project?.reviewCards.map(\.text) == ["第一张的说明。第二张的说明。", "", "第三张的说明。"],
+              try demoStore.load().reviewCards == project?.reviewCards,
+              !actionEnabled(#selector(moveLastPassageForward)) else { exit(85) }
+        editingCardID = project!.reviewCards[0].id; refresh()
+        guard !actionEnabled(#selector(moveFirstPassageBack)) else { exit(86) }
+        try movePassage(toPrevious: false)
+        guard project?.reviewCards.map(\.text) == fixture.reviewCards.map(\.text),
+              project?.reviewCards.map(\.frameIDs) == fixture.reviewCards.map(\.frameIDs),
+              project?.transcripts == [source] else { exit(87) }
+        let moved = project
+        project?.reconcileScreenshotCards()
+        guard project == moved else { exit(88) }
+        print("TRANSCRIPT_PARTITION_UI_OK · complete drafts, adjacent moves, busy controls and atomic failed-save protection")
     }
 
     /// Exercises onboarding without asking for real OS permission, writing a
@@ -726,8 +761,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         startField.widthAnchor.constraint(equalToConstant: 76).isActive = true
         endField.widthAnchor.constraint(equalToConstant: 76).isActive = true
         startField.delegate = self; endField.delegate = self
-        let details = button("关联详情…", #selector(showAssociationDetails), idleOnly: true); details.controlSize = .small
+        let details = button("分段详情…", #selector(showAssociationDetails), idleOnly: true); details.controlSize = .small
         let source = button("原始转写…", #selector(showSourceTranscript), idleOnly: true); source.controlSize = .small
+        let moveBack = button("首句移到上一张", #selector(moveFirstPassageBack), idleOnly: true)
+        let moveForward = button("末句移到下一张", #selector(moveLastPassageForward), idleOnly: true)
+        moveBack.controlSize = .small; moveForward.controlSize = .small
+        moveBack.toolTip = "将开头的一句移到上一张末尾，两张卡片一起保存。"
+        moveForward.toolTip = "将结尾的一句移到下一张开头，两张卡片一起保存。"
         let timing = row([caption("讲解 / 秒"), startField, caption("—"), endField, InterfaceStyle.spacer()])
         framePicker.target = self; framePicker.action = #selector(selectFrame)
         framePicker.setAccessibilityLabel("卡片截图，选择后自动保存，再次选择即替换")
@@ -750,7 +790,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         frameTimeField.widthAnchor.constraint(equalToConstant: 74).isActive = true; frameTimeField.setAccessibilityLabel("从录屏取图的时间，秒")
         let extract = button("提取截图", #selector(extractManualFrame), idleOnly: true); extract.controlSize = .small
         let extraction = row([caption("取图 / 秒"), frameTimeField, extract, InterfaceStyle.spacer(), clear])
-        return InterfaceStyle.column([title, textScroll, timing, row([details, source, InterfaceStyle.spacer()]), InterfaceStyle.separator(),
+        return InterfaceStyle.column([title, textScroll, row([moveBack, moveForward, InterfaceStyle.spacer()]), timing, row([details, source, InterfaceStyle.spacer()]), InterfaceStyle.separator(),
             sectionHeading("画面与标注", symbol: "photo"), previewSurface, attachmentLabel, images, extraction], spacing: 9)
     }
 
@@ -841,6 +881,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         case #selector(saveCard), #selector(deleteCard): return cardIndex != nil
         case #selector(showAssociationDetails): return cardIndex != nil
         case #selector(showSourceTranscript): return project != nil
+        case #selector(moveFirstPassageBack), #selector(moveLastPassageForward):
+            guard let index = cardIndex, let cards = project?.reviewCards,
+                  !cards[index].text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
+            return action == #selector(moveFirstPassageBack) ? index > 0 : index + 1 < cards.count
         case #selector(clearFrames): return cardIndex.map { !(project?.reviewCards[$0].frameIDs.isEmpty ?? true) } ?? false
         case #selector(selectFrame): return cardIndex != nil && framePicker.selectedItem != nil
         case #selector(extractManualFrame): return cardIndex != nil && project?.recording != nil
@@ -1357,7 +1401,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         automaticTranscription = false; cancelASRButton.isEnabled = false
         do {
             try persist()
-            setBusy(false, status: "转写已保存。截图卡片保持独立，请校对讲解；未关联内容可在原始转写中查看。")
+            setBusy(false, status: "转写已保存，并按截图数量分段。可直接编辑，或将首句、末句移到相邻卡片。")
         } catch {
             setBusy(false, status: "转写保留在内存中，但项目保存失败；请修复存储后重试保存。")
             reviewSaveFailed = true; fail(error)
@@ -1369,7 +1413,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         guard !busy, let id = editingCardID, let index = project?.reviewCards.firstIndex(where: { $0.id == id }) else { return }
         project?.reviewCards[index].text = transcriptEditor.string
         project?.reviewCards[index].userEdited = true
-        do { try persist(); reviewSaveFailed = false; savedLabel.stringValue = "文字已保存"; updateVisibleCard(at: index) }
+        project?.reviewCards[index].passages = nil
+        do { try persist(); reviewSaveFailed = false; savedLabel.stringValue = "文字已保存"; updateVisibleCard(at: index); updateInterface() }
         catch { reviewSaveFailed = true; savedLabel.stringValue = "保存失败"; report("保存文字失败：\(error.localizedDescription)") }
     }
     func controlTextDidChange(_ notification: Notification) {
@@ -1438,6 +1483,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     @objc private func saveCard() {
         guard !busy, cardIndex != nil, commitTiming() else { return }
         do { try persist(); savedLabel.stringValue = "已保存"; report("卡片已保存到本地项目。") } catch { fail(error) }
+    }
+    @objc private func moveFirstPassageBack() {
+        do { try movePassage(toPrevious: true) } catch { fail(error) }
+    }
+    @objc private func moveLastPassageForward() {
+        do { try movePassage(toPrevious: false) } catch { fail(error) }
+    }
+    private func movePassage(toPrevious: Bool) throws {
+        guard !busy, !recorder.isBusy, commitTiming(), let store = store,
+              let id = editingCardID, var updated = project,
+              updated.moveBoundaryPassage(cardID: id, toPrevious: toPrevious) else { return }
+        try store.save(updated)
+        project = updated; refresh()
+        report("已调整讲解分界，两张卡片均已保存。")
     }
     @objc private func addCard() {
         guard !busy, commitTiming(), let store = store, var updated = project else { return }
@@ -1542,7 +1601,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     @objc private func showAssociationDetails() {
         guard let index = cardIndex, let card = project?.reviewCards[index], commitTiming() else { return }
         var lines: [String] = []
-        if card.userEdited == true { lines.append("已手动校对：以下为上次自动关联依据，重试不会覆盖你的修改。") }
+        if card.userEdited == true { lines.append("已手动整理；原始时间仅作参考，重试不会覆盖你的修改。") }
         if let association = card.association {
             lines.append(association.summary)
             lines.append(String(format: "截图：%.3f 秒（录制媒体时钟）", association.screenshotSeconds))
@@ -1556,9 +1615,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     match.startSeconds, match.endSeconds, match.offsetSeconds, match.precision == "word" ? "词" : "句"))
             }
             lines.append(contentsOf: association.reasons)
-            lines.append("时间关联需要人工核对语义。截图精度受录制帧率和采集缓冲影响，显示毫秒不代表毫秒级准确。")
-        } else { lines.append("历史或手动卡片：保留原有文字、时间和配图，没有新增自动关联依据。") }
-        let alert = NSAlert(); alert.messageText = "讲解关联详情"
+            lines.append("分段优先保留全部文字，时间只辅助选择分界。句级时间保留原句范围；可将边界附近的句子移到相邻卡片。")
+        } else { lines.append("历史或手动卡片：保留原有文字、时间和配图。") }
+        let alert = NSAlert(); alert.messageText = "讲解分段详情"
         alert.accessoryView = transcriptScroll(text: lines.joined(separator: "\n\n"), width: 580, height: 280)
         alert.runModal()
     }
@@ -1574,7 +1633,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         }.joined(separator: "\n\n────────\n\n")
         let panel = transcriptSourceWindow ?? NSWindow(contentRect: NSRect(x: 170, y: 170, width: 680, height: 480),
             styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
-        panel.isReleasedWhenClosed = false; panel.title = "原始转写 · 含未关联内容"
+        panel.isReleasedWhenClosed = false; panel.title = "原始转写 · 保留原文与时间戳"
         panel.contentView = transcriptScroll(text: text.isEmpty ? "尚无转写结果。截图卡片已独立保存。" : text, width: 680, height: 480)
         transcriptSourceWindow = panel; panel.makeKeyAndOrderFront(nil)
     }
