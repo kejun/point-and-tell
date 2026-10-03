@@ -6,6 +6,20 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
     <channel>
         <title>Point &amp; Tell</title>
         <item>
+            <title>0.5.2</title>
+            <pubDate>Sat, 03 Oct 2026 09:50:41 +0000</pubDate>
+            <sparkle:version>14</sparkle:version>
+            <sparkle:shortVersionString>0.5.2</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>11.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h2>Point &amp; Tell 0.5.2</h2>
+<pre>- Keep primary-action text and symbols white while pressed, with 82% foreground opacity. Draw the title with an explicit foreground in AppKit&#x27;s title frame and tint its native symbol, avoiding AppKit&#x27;s additional highlighted text dimming; preserve native layout, focus and accessibility.
+- Activate the application and bring the workspace to the front when recording finishes, restoring a hidden or minimized window. Apply the same presentation to recording failures; keep the recording HUD nonactivating during capture.
+- Extend the native UI fixture with pressed-state screenshots in light/dark appearances and a hidden/inactive application to key/main workspace check. The 0.5.1 Intel device acceptance is not extended to this new source or version.
+- Record the user&#x27;s separate request to release 0.5.2 with the known Intel CI pause-probe limitation. This source-pinned release decision preserves the failed evidence and does not claim a 0.5.2 device test; all other native, signature and archive checks remain required.</pre>
+]]></description>
+            <enclosure url="https://raw.githubusercontent.com/kejun/point-and-tell/ec5bce8047ac14394520b8975a491921c7595867/releases/v0.5.2/Point-and-Tell-v0.5.2-macOS-universal.zip" length="3898342" type="application/octet-stream" sparkle:edSignature="5xkudm0VBlFFAeyGiJ9/U8EvVMd2vWzg9PMDdLIieUqrES+8tu5PmFqKq5xtaXQEv1J+1VZu/OX0Eb1sQb7tCA=="/>
+        </item>
+        <item>
             <title>0.5.1</title>
             <pubDate>Sat, 03 Oct 2026 08:23:03 +0000</pubDate>
             <sparkle:version>13</sparkle:version>
@@ -42,6 +56,6 @@ This source change does not publish an update-enabled download by itself. Config
     </channel>
 </rss>
 <!-- sparkle-signatures:
-edSignature: lsZcElDHfuFlP6PtzQxhcdgj/szyZH5jrhd2cF5/gsCjVp3zcvIlJonfGFm9WSgIDR3DZwdptuQ1+hgIm9LoDw==
-length: 4522
+edSignature: skctAJiHmpS4dfQx/k11NDR4o82j20T5VRjBla5m4HfA8OOGVept43pU0q7Svpl/rrBTzrEtmDuXnuZAltm7CQ==
+length: 6332
 -->
