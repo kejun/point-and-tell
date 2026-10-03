@@ -410,6 +410,18 @@ final class RecordingEngine: NSObject {
         // is converted to the ASR format later by the existing local AudioChunker.
         movie.setOutputSettings(nil, for: video)
         movie.setOutputSettings(nil, for: audio)
+        // At 5 fps the native preset buffered up to eight reordered frames.
+        // After resume those stale paused-screen frames were actually presented
+        // for 1.8 seconds. Preserve the negotiated format/size/bitrate and audio,
+        // but disallow video frame reordering and provide the actual source rate.
+        var videoSettings = movie.outputSettings(for: video)
+        if videoSettings[AVVideoCodecKey] != nil {
+            var compression = videoSettings[AVVideoCompressionPropertiesKey] as? [String: Any] ?? [:]
+            compression[AVVideoAllowFrameReorderingKey] = false
+            compression[AVVideoExpectedSourceFrameRateKey] = requestedFPS
+            videoSettings[AVVideoCompressionPropertiesKey] = compression
+            movie.setOutputSettings(videoSettings, for: video)
+        }
         // Apply start/pause/resume/stop at the movie output's actual audio
         // sample boundary. Only scalar PTS values are observed; no samples are
         // retained, copied, re-encoded or queued by the application.
