@@ -116,6 +116,13 @@ final class RecordingEngine: NSObject {
     private var transitionTimeout: TimeInterval = 8
     /// Only injected by the offline native driver fixture; production reads AVFoundation.
     private var microphoneProbe: (() -> Bool)?
+    private var transitionTrace: [String] = []
+    var transitionDiagnostics: [String] { read { transitionTrace } }
+    private func traceTransition(_ event: String) {
+        let raw = output.map { CMTimeGetSeconds($0.recordedDuration) } ?? savedElapsed
+        transitionTrace.append("\(event); phase=\(phase.rawValue); nativePaused=\(output?.isRecordingPaused ?? false); nativeDuration=\(raw)")
+        if transitionTrace.count > 16 { transitionTrace.removeFirst(transitionTrace.count - 16) }
+    }
     private var requestedMicrophoneID: String?
     private var microphoneID: String?
     private var microphoneName: String?
@@ -191,6 +198,7 @@ final class RecordingEngine: NSObject {
                 self.deliver { completion(.failure(EngineError.destinationExists)) }; return
             }
             self.control.begin()
+            self.transitionTrace.removeAll()
             let id = self.operationID
             self.failureStage = .permissions
             self.startCompletion = completion
@@ -262,6 +270,7 @@ final class RecordingEngine: NSObject {
             case .unchanged: self.deliver { completion(.success(())) }
             case .rejected: self.deliver { completion(.failure(EngineError.busy)) }
             case .started(let ticket):
+                self.traceTransition(kind == .pause ? "request pause" : "request resume")
                 self.failureStage = kind == .pause ? .pausing : .resuming
                 self.transitionCompletion = completion
                 self.audioInactiveSince = nil; self.quietSince = nil
@@ -269,6 +278,7 @@ final class RecordingEngine: NSObject {
                 self.microphoneHealth = kind == .pause ? "pausing" : "resuming"
                 let watchdog = DispatchWorkItem { [weak self] in
                     guard let self = self, self.control.pending == ticket else { return }
+                    self.traceTransition("transition timeout")
                     self.pendingFailure = CaptureFailure(stage: self.failureStage, underlying: EngineError.transitionTimedOut)
                     self.beginStopping()
                 }
@@ -282,10 +292,10 @@ final class RecordingEngine: NSObject {
 
     private func acknowledgeTransition(_ kind: RecordingControl.Kind, output: AVCaptureFileOutput, fileURL: URL) {
         queue.async {
+            self.traceTransition("delegate \(kind); sameOutput=\(self.output === output); sameURL=\(self.destination == fileURL)")
             guard self.output === output, self.destination == fileURL,
                   let ticket = self.control.pending, ticket.operationID == self.operationID,
-                  ticket.kind == kind,
-                  output.isRecordingPaused == (kind == .pause) else { return }
+                  ticket.kind == kind else { return }
             // Read the final written time before freezing. Resume deliberately
             // uses AVFoundation's compressed timeline without subtracting pauses.
             if kind == .pause { self.savedElapsed = self.currentDuration() }

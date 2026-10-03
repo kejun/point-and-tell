@@ -74,6 +74,12 @@ jobs:
           elif [[ "$result" != "0" ]]; then
             exit "$result"
           fi
+          python3 - <<'PY'
+          import json
+          from pathlib import Path
+          report = json.loads(Path('dist/capture-pause-probe/results.json').read_text())
+          assert report['status'] in ('passed', 'unavailable'), report
+          PY
       - name: Verify offline HTML in WebKit
         timeout-minutes: 2
         run: swift scripts/verify-export.swift "$PWD/dist/ui-smoke/timeline.html" "$PWD/dist/ui-smoke"
