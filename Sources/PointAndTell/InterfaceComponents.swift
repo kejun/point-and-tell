@@ -72,13 +72,13 @@ final class PrimaryButtonCell: NSButtonCell {
 
     override func drawTitle(_ title: NSAttributedString, withFrame frame: NSRect, in controlView: NSView) -> NSRect {
         let text = NSMutableAttributedString(attributedString: title)
-        text.addAttribute(.foregroundColor, value: NSColor.white,
+        text.addAttribute(.foregroundColor, value: foregroundColor,
                           range: NSRange(location: 0, length: text.length))
-        // AppKit can replace the attributed foreground with its pressed-state
-        // color. Tint the rendered glyphs after native layout so they stay white.
-        return withForegroundTint(in: controlView) {
-            super.drawTitle(text, withFrame: frame, in: controlView)
-        }
+        // Keep AppKit's title frame, font and alignment, but draw the attributed
+        // text directly: super.drawTitle applies its own highlighted opacity,
+        // which leaves almost invisible glyphs even after a white source-in tint.
+        text.draw(with: frame, options: [.usesLineFragmentOrigin, .truncatesLastVisibleLine])
+        return frame
     }
 
     override func drawImage(_ image: NSImage, withFrame frame: NSRect, in controlView: NSView) {
