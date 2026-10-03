@@ -148,15 +148,19 @@ public struct ReviewCard: Codable, Equatable, Identifiable, Sendable {
     public var association: ScreenshotAssociation?
     public var generatedContent: ReviewCardContent?
     public var userEdited: Bool?
+    /// Exact source passages used for local boundary adjustments. Optional for old projects.
+    public var passages: [ReviewPassage]?
 
     public init(id: UUID = UUID(), transcriptID: UUID? = nil, text: String,
                 frameIDs: [UUID] = [], startSeconds: Double? = nil, endSeconds: Double? = nil,
                 sourceAnchorID: UUID? = nil, association: ScreenshotAssociation? = nil,
-                generatedContent: ReviewCardContent? = nil, userEdited: Bool? = nil) {
+                generatedContent: ReviewCardContent? = nil, userEdited: Bool? = nil,
+                passages: [ReviewPassage]? = nil) {
         self.id = id; self.transcriptID = transcriptID; self.text = text
         self.frameIDs = frameIDs; self.startSeconds = startSeconds; self.endSeconds = endSeconds
         self.sourceAnchorID = sourceAnchorID; self.association = association
         self.generatedContent = generatedContent; self.userEdited = userEdited
+        self.passages = passages
     }
 
     public var isTimed: Bool {

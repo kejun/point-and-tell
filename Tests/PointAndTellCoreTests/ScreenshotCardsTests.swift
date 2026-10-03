@@ -36,14 +36,16 @@ final class ScreenshotCardsTests: XCTestCase {
         XCTAssertFalse(p.reconcileScreenshotCards())
     }
 
-    func testSentenceOnlyAcrossImagesStaysAmbiguousWithoutInventingWords() {
+    func testSentenceOnlyAcrossImagesIsFullyAssignedWithoutInventingTimes() {
         let images = [picture(3), picture(10), picture(16)]
         let sentence = TranscriptSegment(text: "整句只有真实句级时间，不能平均拆分。", startSeconds: 1, endSeconds: 19)
         var p = project(images, [sentence]); p.reconcileScreenshotCards()
         XCTAssertEqual(p.reviewCards.count, 3)
-        XCTAssertTrue(p.reviewCards.allSatisfy { $0.text.isEmpty && $0.association?.status == .needsReview })
+        XCTAssertTrue(p.reviewCards.allSatisfy { !$0.text.isEmpty && $0.association?.status == .matched })
+        XCTAssertEqual(p.reviewCards.map(\.text).joined(), sentence.text)
         XCTAssertEqual(p.transcripts, [sentence])
-        XCTAssertTrue(p.reviewCards.allSatisfy { $0.startSeconds == nil && $0.endSeconds == nil })
+        XCTAssertTrue(p.reviewCards.allSatisfy { $0.startSeconds == 1 && $0.endSeconds == 19 })
+        XCTAssertTrue(p.reviewCards.allSatisfy { $0.association?.precision == "sentence" })
     }
 
     func testSentenceOnlyUniqueAssociationRetainsSentencePrecisionAndWholeText() {
@@ -65,7 +67,8 @@ final class ScreenshotCardsTests: XCTestCase {
         XCTAssertEqual(p.transcripts, [source])
         XCTAssertTrue(p.asrChunks[0].needsTimestampRetry)
         XCTAssertEqual(p.reviewCards.count, 2)
-        XCTAssertTrue(p.reviewCards.allSatisfy { $0.text.isEmpty && $0.association?.status == .unmatched })
+        XCTAssertEqual(p.reviewCards.map(\.text).joined(), source.text)
+        XCTAssertTrue(p.reviewCards.allSatisfy { !$0.text.isEmpty && $0.association?.status == .matched && !$0.isTimed })
     }
 
     func testEqualTimeEventsStaySeparateStableAndDoNotDuplicateSpeech() {
@@ -73,7 +76,8 @@ final class ScreenshotCardsTests: XCTestCase {
         var p = project([a, b], [speech([("无法区分归属。", 4, 6)])])
         p.reconcileScreenshotCards()
         XCTAssertEqual(p.reviewCards.map(\.frameIDs), [[a.id], [b.id]])
-        XCTAssertTrue(p.reviewCards.allSatisfy { $0.text.isEmpty && $0.association?.status == .needsReview })
+        XCTAssertEqual(p.reviewCards.map(\.text).joined(), "无法区分归属。")
+        XCTAssertTrue(p.reviewCards.allSatisfy { !$0.text.isEmpty && $0.association?.status == .matched })
         let saved = p; p.reconcileScreenshotCards(); XCTAssertEqual(p, saved)
     }
 
@@ -93,7 +97,7 @@ final class ScreenshotCardsTests: XCTestCase {
         var p = project([picture(5), picture(15)], [source]); p.reconcileScreenshotCards()
         XCTAssertEqual(p.reviewCards.map(\.startSeconds), [6, 14])
         XCTAssertEqual(p.reviewCards.map(\.endSeconds), [11, 16])
-        XCTAssertTrue(p.reviewCards[0].association!.reasons.contains("相邻截图间的真实语音停顿"))
+        XCTAssertTrue(p.reviewCards[0].association!.reasons.contains("分界参考真实语音停顿"))
     }
 
     func testChunkOffsetsAreAddedOnceAndPenIntervalSpansChunks() throws {

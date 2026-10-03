@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.1 — 2026-10-03
+
+- Partition the full transcript into the screenshot card count with an ordered local dynamic program. Punctuation, actual pauses and soft timing scores choose boundaries; distant, overlapping and untimed passages no longer fail assignment.
+- Preserve exact source text slices and real word/sentence timing. Text-only subdivisions retain their enclosing sentence interval instead of inventing word times.
+- Add first/last passage moves between adjacent cards, with atomic persistence and protection against busy operations or failed writes. Preserve source references, images, manual timing, edits and deleted-card decisions.
+- Reopen existing projects to regenerate untouched automatic cards without another transcription/upload.
+- Add exact-coverage, Unicode, long-transcript, migration, edit/reopen/export and native movement regressions. The separate Intel pause-media investigation remains deferred; this change does not certify that capture path.
+
 ## 0.5.0 — 2026-10-03
 
 - Add acknowledged native pause/resume for screen and microphone in the same MOV, with bounded transition timeouts and Stop priority.
