@@ -27,6 +27,9 @@ public struct ScreenshotAssociation: Codable, Equatable, Sendable {
     public enum Status: String, Codable, Sendable { case matched, needsReview, unmatched }
     public var status: Status
     public var screenshotSeconds: Double
+    public var captureStartSeconds: Double?
+    public var captureEndSeconds: Double?
+    public var annotationStartSeconds: Double?
     public var annotationEndSeconds: Double?
     public var matches: [SpeechMatch]
     public var reasons: [String]
@@ -191,7 +194,9 @@ public enum ScreenshotCardMatcher {
             }
             let association = ScreenshotAssociation(
                 status: ambiguous.contains(index) ? .needsReview : (selected.isEmpty ? .unmatched : .matched),
-                screenshotSeconds: picture.timestamp, annotationEndSeconds: picture.endTimestamp,
+                screenshotSeconds: picture.timestamp, captureStartSeconds: picture.captureStartSeconds,
+                captureEndSeconds: picture.captureEndSeconds, annotationStartSeconds: picture.annotationStartSeconds,
+                annotationEndSeconds: picture.endTimestamp,
                 matches: matches, reasons: evidence[index].sorted())
             var card = ReviewCard(id: picture.id,
                 transcriptID: Set(matches.map(\.transcriptID)).count == 1 ? matches.first?.transcriptID : nil,

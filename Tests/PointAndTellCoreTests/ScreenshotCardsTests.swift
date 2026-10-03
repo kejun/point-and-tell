@@ -78,7 +78,10 @@ final class ScreenshotCardsTests: XCTestCase {
 
     func testMoreThanSixScreenshotsHaveNoCandidateTruncation() {
         let images = (1...12).map { picture(Double($0) * 3) }
-        let parts = (1...12).map { ("第\($0)张。", Double($0) * 3 - 0.2, Double($0) * 3 + 0.2) }
+        let parts: [(String, Double, Double)] = (1...12).map { index in
+            let time = Double(index) * 3.0
+            return ("第\(index)张。", time - 0.2, time + 0.2)
+        }
         var p = project(images, [speech(parts)]); p.reconcileScreenshotCards()
         XCTAssertEqual(p.reviewCards.count, 12)
         XCTAssertEqual(p.reviewCards.map(\.text), parts.map { $0.0 })

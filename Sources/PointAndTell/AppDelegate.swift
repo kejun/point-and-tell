@@ -1052,31 +1052,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             guard let self = self else { return }; defer { self.pendingScreenshot = false }
             guard self.recorder.isRecording, self.project?.id == projectID else { return }
             do {
-                let visual = try VisualCapture.screen(displayID: self.selectedDisplay, belowWindowID: CGWindowID(self.toolbar.windowNumber)); let timestamp = self.recorder.elapsedSeconds
+                let captureStart = self.recorder.elapsedSeconds
+                let visual = try VisualCapture.screen(displayID: self.selectedDisplay, belowWindowID: CGWindowID(self.toolbar.windowNumber))
+                let captureEnd = self.recorder.elapsedSeconds
+                let timestamp = captureStart + (captureEnd - captureStart) / 2
                 if draw {
                     guard let screen = NSScreen.screens.first(where: { ($0.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value == self.selectedDisplay }) else {
                         throw NSError(domain: "PointAndTell", code: 24, userInfo: [NSLocalizedDescriptionKey: "录制屏幕已断开，无法打开画笔。请结束录制并重新选择屏幕。"])
                     }
+                    let annotationStart = self.recorder.elapsedSeconds
                     self.drawing = DrawingOverlay(image: visual.image, screen: screen) { [weak self] result in
                         guard let self = self, self.project?.id == projectID else { return }
-                        if let image = try result.get() { try self.addAnchor(id: eventID, image: image, timestamp: timestamp, kind: .pen, pointer: visual.pointer, endTimestamp: max(timestamp, self.recorder.elapsedSeconds), store: store) }
+                        if let image = try result.get() { try self.addAnchor(id: eventID, image: image, timestamp: timestamp, kind: .pen, pointer: visual.pointer, endTimestamp: max(timestamp, self.recorder.elapsedSeconds), captureStart: captureStart, captureEnd: captureEnd, annotationStart: annotationStart, store: store) }
                         self.drawing = nil
                         if self.recorder.isRecording { self.toolbar.orderFrontRegardless() }
                     }; self.drawing?.show()
                 } else {
-                    try self.addAnchor(id: eventID, image: visual.image, timestamp: timestamp, kind: .bookmark, pointer: visual.pointer, store: store); self.toolbar.orderFrontRegardless()
+                    try self.addAnchor(id: eventID, image: visual.image, timestamp: timestamp, kind: .bookmark, pointer: visual.pointer, captureStart: captureStart, captureEnd: captureEnd, store: store); self.toolbar.orderFrontRegardless()
                 }
             } catch { self.toolbar.orderFrontRegardless(); self.fail(error) }
         }
     }
-    private func addAnchor(id: UUID = UUID(), image: CGImage, timestamp: Double, kind: AnchorKind, pointer: NormalizedPoint? = nil, endTimestamp: Double? = nil, store: ProjectStore) throws {
+    private func addAnchor(id: UUID = UUID(), image: CGImage, timestamp: Double, kind: AnchorKind, pointer: NormalizedPoint? = nil, endTimestamp: Double? = nil, captureStart: Double? = nil, captureEnd: Double? = nil, annotationStart: Double? = nil, store: ProjectStore) throws {
         guard self.store?.folderURL == store.folderURL, var updated = project,
               !updated.anchors.contains(where: { $0.id == id }) else { return }
         let relative = "frames/\(id.uuidString).png"
         try VisualCapture.save(image, to: try store.resolveRelativePath(relative, requireExisting: false), pointer: kind == .bookmark ? pointer : nil)
         let anchor = VisualAnchor(id: id, timestamp: timestamp, imageRelativePath: relative, kind: kind,
             pointer: pointer, endTimestamp: endTimestamp,
-            source: kind == .pen ? .recordingPen : .recordingBookmark)
+            source: kind == .pen ? .recordingPen : .recordingBookmark,
+            captureStartSeconds: captureStart, captureEndSeconds: captureEnd, annotationStartSeconds: annotationStart)
         updated.registerRecordingAnchor(anchor)
         try store.save(updated); project = updated
     }
@@ -1453,6 +1458,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         if let association = card.association {
             lines.append(association.summary)
             lines.append(String(format: "截图：%.3f 秒（录制媒体时钟）", association.screenshotSeconds))
+            if let start = association.captureStartSeconds, let end = association.captureEndSeconds {
+                lines.append(String(format: "截图采集前后媒体时钟：%.3f–%.3f 秒；截图取中值，非精确视频帧 PTS", start, end))
+            }
+            if let start = association.annotationStartSeconds { lines.append(String(format: "画笔会话开始：%.3f 秒", start)) }
             if let end = association.annotationEndSeconds { lines.append(String(format: "画笔区间：%.3f–%.3f 秒", association.screenshotSeconds, end)) }
             for match in association.matches {
                 lines.append(String(format: "语音：%.3f–%.3f 秒；相对截图偏移 %+.3f 秒；%@级",

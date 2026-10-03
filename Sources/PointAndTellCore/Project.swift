@@ -53,6 +53,11 @@ public struct VisualAnchor: Codable, Equatable, Identifiable, Sendable {
     /// timestamp remains the source screenshot's recording time.
     public var endTimestamp: Double?
     public var source: AnchorSource?
+    /// Media-clock observations bracketing the screen grab (not wall time or an exact video PTS).
+    public var captureStartSeconds: Double?
+    public var captureEndSeconds: Double?
+    /// When the frozen-image annotation session became available, separate from the screenshot time.
+    public var annotationStartSeconds: Double?
 
     public var isRecordingScreenshot: Bool {
         if let source = source { return source == .recordingBookmark || source == .recordingPen }
@@ -61,10 +66,13 @@ public struct VisualAnchor: Codable, Equatable, Identifiable, Sendable {
 
     public init(id: UUID = UUID(), timestamp: Double, imageRelativePath: String,
                 kind: AnchorKind = .frame, pointer: NormalizedPoint? = nil, endTimestamp: Double? = nil,
-                source: AnchorSource? = nil) {
+                source: AnchorSource? = nil, captureStartSeconds: Double? = nil,
+                captureEndSeconds: Double? = nil, annotationStartSeconds: Double? = nil) {
         self.id = id; self.timestamp = timestamp; self.imageRelativePath = imageRelativePath
         self.kind = kind; self.pointer = pointer; self.endTimestamp = endTimestamp
         self.source = source
+        self.captureStartSeconds = captureStartSeconds; self.captureEndSeconds = captureEndSeconds
+        self.annotationStartSeconds = annotationStartSeconds
     }
 }
 
@@ -402,6 +410,9 @@ public final class ProjectStore {
         for anchor in project.anchors {
             _ = try resolveRelativePath(anchor.imageRelativePath)
             try time(anchor.timestamp)
+            for value in [anchor.captureStartSeconds, anchor.captureEndSeconds, anchor.annotationStartSeconds].compactMap({ $0 }) { try time(value) }
+            if let start = anchor.captureStartSeconds, let end = anchor.captureEndSeconds,
+               (start > anchor.timestamp || end < anchor.timestamp) { throw ProjectError.invalidManifest("screenshot clock observations are reversed") }
             if let end = anchor.endTimestamp {
                 try time(end)
                 if end < anchor.timestamp { throw ProjectError.invalidManifest("anchor interval is reversed") }

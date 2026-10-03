@@ -52,8 +52,8 @@ public extension ProjectManifest {
             guard let old = previous.first(where: { $0.id == original.transcriptID }) else { return original }
             let unchanged = original.text == old.text && original.startSeconds == old.startSeconds
                 && original.endSeconds == old.endSeconds
-            // Let buildReviewFrames regenerate untouched automatic placeholders
-            // after extracting screenshots at the new provider times.
+            // Legacy core callers can regenerate untouched suggestions after
+            // accepting new times. The app adopts screenshot-owned cards first.
             if unchanged && original.frameIDs.isEmpty { return nil }
             var card = original
             if let replacement = replacements.first(where: { $0.id == old.id }) {
