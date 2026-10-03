@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.5.2 — Unreleased
+
+- Keep primary-action text and symbols white while pressed, with 82% foreground opacity. Draw the title with an explicit foreground in AppKit's title frame and tint its native symbol, avoiding AppKit's additional highlighted text dimming; preserve native layout, focus and accessibility.
+- Activate the application and bring the workspace to the front when recording finishes, restoring a hidden or minimized window. Apply the same presentation to recording failures; keep the recording HUD nonactivating during capture.
+- Extend the native UI fixture with pressed-state screenshots in light/dark appearances and a hidden/inactive application to key/main workspace check. The 0.5.1 Intel device acceptance is not extended to this new source or version.
+
 ## 0.5.1 — 2026-10-03
 
 - Partition the full transcript into the screenshot card count with an ordered local dynamic program. Punctuation, actual pauses and soft timing scores choose boundaries; distant, overlapping and untimed passages no longer fail assignment.

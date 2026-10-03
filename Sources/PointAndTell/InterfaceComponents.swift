@@ -58,6 +58,10 @@ enum InterfaceStyle {
 /// bezelColor for rounded buttons on older macOS or inactive windows; drawing
 /// only the bezel/content keeps native action, focus and accessibility behavior.
 final class PrimaryButtonCell: NSButtonCell {
+    private var foregroundColor: NSColor {
+        NSColor.white.withAlphaComponent(!isEnabled ? 0.65 : (isHighlighted ? 0.82 : 1))
+    }
+
     override func drawBezel(withFrame frame: NSRect, in controlView: NSView) {
         let color = isHighlighted
             ? InterfaceStyle.primaryFill.shadow(withLevel: 0.18) ?? InterfaceStyle.primaryFill
@@ -68,25 +72,41 @@ final class PrimaryButtonCell: NSButtonCell {
 
     override func drawTitle(_ title: NSAttributedString, withFrame frame: NSRect, in controlView: NSView) -> NSRect {
         let text = NSMutableAttributedString(attributedString: title)
-        text.addAttribute(.foregroundColor, value: NSColor.white.withAlphaComponent(isEnabled ? 1 : 0.65),
+        text.addAttribute(.foregroundColor, value: foregroundColor,
                           range: NSRange(location: 0, length: text.length))
-        return super.drawTitle(text, withFrame: frame, in: controlView)
+        // Keep AppKit's font and horizontal layout, including vertical centering
+        // when its title frame is taller than the text. Draw directly because
+        // super.drawTitle applies additional highlighted text dimming.
+        let options: NSString.DrawingOptions = [.usesLineFragmentOrigin, .truncatesLastVisibleLine]
+        let textBounds = text.boundingRect(with: frame.size, options: options, context: nil)
+        let height = min(frame.height, ceil(textBounds.height))
+        let textFrame = NSRect(x: frame.minX, y: frame.midY - height / 2,
+                               width: frame.width, height: height)
+        text.draw(with: textFrame, options: options)
+        return textFrame
     }
 
     override func drawImage(_ image: NSImage, withFrame frame: NSRect, in controlView: NSView) {
-        guard let context = NSGraphicsContext.current?.cgContext else { return }
         // Let AppKit position/scale the symbol using its alignment metrics, then
         // tint only that isolated drawing. Re-rasterizing a symbol at image.size
         // loses those metrics and can squash circular icons.
+        withForegroundTint(in: controlView) {
+            super.drawImage(image, withFrame: frame, in: controlView)
+        }
+    }
+
+    private func withForegroundTint<T>(in controlView: NSView, drawing: () -> T) -> T {
+        guard let context = NSGraphicsContext.current?.cgContext else { return drawing() }
         context.saveGState()
         context.beginTransparencyLayer(auxiliaryInfo: nil)
-        super.drawImage(image, withFrame: frame, in: controlView)
+        let result = drawing()
         context.setBlendMode(.sourceIn)
-        context.setFillColor(NSColor.white.cgColor)
+        context.setFillColor(foregroundColor.cgColor)
         context.fill(controlView.bounds)
         context.setBlendMode(.normal)
         context.endTransparencyLayer()
         context.restoreGState()
+        return result
     }
 }
 

@@ -8,6 +8,10 @@ Transcription retries preserve deletion decisions. Surviving cards from the same
 
 **新建录制** and **导出独立 HTML** use a solid forest-teal background (`#0F5C4F`) and white text/icons. Native button cells draw the brand background consistently in light/dark appearances and inactive windows. Pressed and disabled states remain distinct, and native action dispatch, focus and accessibility are retained. Secondary actions retain their standard appearance.
 
+The 0.5.2 source fixes the pressed foreground: text and symbols stay white with 82% opacity over the darker pressed background. The title draws directly in AppKit's title frame with an explicit foreground, bypassing its additional highlighted text dimming; the native symbol receives the same white tint. The UI fixture saves `primary-buttons-pressed-light.png` and `primary-buttons-pressed-dark.png` for visual verification.
+
+When recording finishes, the app now activates and makes the workspace the front key window, restoring it if hidden or minimized. Recording failures use the same presentation before showing the error. The workspace keeps its normal window level; the recording HUD remains nonactivating and does not steal focus during capture. The native fixture verifies returning from a hidden/inactive app and dismissing the HUD. No project format, migration, recording timing or transcription behavior changes are involved.
+
 Regression coverage includes deleting one of several cards from a shared transcript, deleting the final manual/automatic card, save/reopen, HTML/Markdown/JSON exclusion, retry with changed sentence boundaries, new chunks, adjacent selection, busy state and a real failed-write rollback. Existing native audio, pen, screenshot picker and offline export checks remain in place.
 
 Native fixture screenshots:

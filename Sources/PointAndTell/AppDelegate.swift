@@ -238,6 +238,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     self.window.makeKeyAndOrderFront(nil); self.window.makeFirstResponder(self.table)
                     try render("window", width: 1080, height: 760)
                     try render("review-dark-compact", width: 980, height: 680, dark: true)
+                    self.startButton.highlight(true); self.exportHTMLButton.highlight(true)
+                    try render("primary-buttons-pressed-light", width: 1080, height: 760)
+                    try render("primary-buttons-pressed-dark", width: 1080, height: 760, dark: true)
+                    self.startButton.highlight(false); self.exportHTMLButton.highlight(false)
+                    print("PRIMARY_BUTTON_PRESSED_UI_OK · native highlighted text/icon rendering in light and dark appearances")
                     try self.verifyCardDeletion(store: demoStore)
                     try render("card-deleted", width: 1080, height: 760)
                     self.project = demo; self.editingCardID = nil; self.refresh()
@@ -330,15 +335,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                             try bitmap.representation(using: .png, properties: [:])?.write(to: directory.appendingPathComponent("recording-toolbar.png"))
                         }
                     }
-                    self.toolbar.hideAfterRecording()
-                    guard !self.toolbar.isVisible, !self.toolbar.recordingVisible else { exit(23) }
-                    print("TOOLBAR_SMOKE_OK · persistent nonactivating HUD, all Spaces/full-screen flags, stopped cleanup")
-                    print("PAUSE_UI_OK · recording/pausing/paused/resuming/stopping buttons and update guards")
-                    print("UI_SMOKE_OK · light/dark, compact layout, empty states, save and busy controls")
-                    exit(0)
+                    self.verifyPostRecordingFocus {
+                        print("TOOLBAR_SMOKE_OK · persistent nonactivating HUD, all Spaces/full-screen flags, stopped cleanup")
+                        print("PAUSE_UI_OK · recording/pausing/paused/resuming/stopping buttons and update guards")
+                        print("UI_SMOKE_OK · light/dark, compact layout, empty states, save and busy controls")
+                        exit(0)
+                    }
                 } catch { fputs("UI smoke render failed: \(error.localizedDescription)\n", stderr); exit(4) }
             }
         } catch { fputs("UI smoke fixture failed\n", stderr); exit(1) }
+    }
+
+    private func verifyPostRecordingFocus(completion: @escaping () -> Void) {
+        // Return to the main queue between observations: hiding/activating an
+        // application is asynchronous, so a nested run loop inside a dispatch
+        // block cannot reliably finish these AppKit transitions.
+        func waitFor(_ state: @escaping () -> Bool, code: Int32, then: @escaping () -> Void) {
+            let deadline = Date().addingTimeInterval(3)
+            func poll() {
+                if state() { then(); return }
+                guard Date() < deadline else {
+                    fputs("Workspace focus fixture \(code): active=\(NSApp.isActive), hidden=\(NSApp.isHidden), visible=\(self.window.isVisible), key=\(self.window.isKeyWindow), main=\(self.window.isMainWindow)\n", stderr)
+                    exit(code)
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.05, execute: poll)
+            }
+            DispatchQueue.main.async(execute: poll)
+        }
+        NSApp.hide(nil)
+        waitFor({ NSApp.isHidden && !NSApp.isActive }, code: 81) {
+            self.presentWorkspaceAfterRecording()
+            waitFor({ NSApp.isActive && !NSApp.isHidden && self.window.isVisible
+                && self.window.isKeyWindow && self.window.isMainWindow }, code: 82) {
+                guard !self.toolbar.isVisible, !self.toolbar.recordingVisible,
+                      self.window.level == .normal else { exit(83) }
+                print("RECORDING_FINISH_FOCUS_OK · hidden/inactive app restored, workspace key/main, normal window level, HUD dismissed")
+                completion()
+            }
+        }
     }
 
     private func verifyCardDeletion(store: ProjectStore) throws {
@@ -989,9 +1023,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         project?.captureState = .finishing; project?.recording?.durationSeconds = recorder.elapsedSeconds
         do { try persist() } catch { fail(error) }
         recorder.stop { [weak self] result in
-            guard let self = self else { return }; self.toolbar.hideAfterRecording(); self.window.makeKeyAndOrderFront(nil)
+            guard let self = self else { return }
             switch result {
             case .success(let movie):
+                self.presentWorkspaceAfterRecording()
                 self.setBusy(true, status: "录屏已保存，正在本地检查音轨和实际解码电平…")
                 DispatchQueue.global(qos: .utility).async {
                     let inspection = Result { try RecordingMediaInspector.inspect(movieURL: movie) }
@@ -1030,11 +1065,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         }
         updateRecordingControls()
     }
+
+    private func presentWorkspaceAfterRecording() {
+        toolbar.hideAfterRecording()
+        if NSApp.isHidden { NSApp.unhide(nil) }
+        if window.isMiniaturized { window.deminiaturize(nil) }
+        window.makeKeyAndOrderFront(nil)
+        // The recording HUD deliberately never activates the application.
+        // Completion is the point where keyboard focus returns to the workspace.
+        NSApp.activate(ignoringOtherApps: true)
+        window.orderFrontRegardless()
+    }
+
     private func recordingFailed(_ error: Error) {
         automaticGate.cancel()
         timer?.invalidate(); timer = nil; pendingScreenshot = nil
         if let drawing = drawing, !drawing.done() { drawing.setFrozen(true) }
-        toolbar.hideAfterRecording(); window.makeKeyAndOrderFront(nil)
+        presentWorkspaceAfterRecording()
         project?.recording?.durationSeconds = recorder.elapsedSeconds
         project?.captureState = .interrupted
         let failure = CaptureFailure(stage: .recording, underlying: error)
