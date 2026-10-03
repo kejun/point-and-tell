@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private var microphoneChoices: [RecordingEngine.MicrophoneChoice] = []
     private var playbackWindow: NSWindow?
     private var playbackPlayer: AVPlayer?
+    private var transcriptSourceWindow: NSWindow?
     private var silenceUploadApproved = false
     private var captureStateBeforeASR: CaptureState?
     private let fpsPicker = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -50,6 +51,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     private var transcribeButton: NSButton!
     private var editingCardID: UUID?
     private var timingDirty = false
+    private var reviewSaveFailed = false
     private var idleButtons: [NSButton] = []
     private var startButton: NSButton!
     private var stopButton: NSButton!
@@ -142,7 +144,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         workflowReady = true; refreshScreens(); refreshMicrophones(); updateInterface()
         window.makeKeyAndOrderFront(nil)
         setupController?.close(); setupController = nil
-        report("设置已就绪。新建录制，结束后自动转写并提取配图。")
+        report("设置已就绪。录制中用标记或画笔创建截图卡片，结束后转写讲解。")
     }
     private func refreshScreens() {
         let oldIndex = screenPicker.indexOfSelectedItem
@@ -247,6 +249,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                     guard !self.exportHTMLButton.isEnabled && !self.exportBundleButton.isEnabled, !self.startButton.isEnabled, !self.transcriptEditor.isEditable else { exit(9) }
                     self.setBusy(false)
                     try self.verifyUpdateProtection(store: demoStore, directory: directory)
+                    try self.verifyScreenshotCards(store: demoStore, image: image)
                     self.project?.reviewCards = []; self.editingCardID = nil; self.refresh()
                     guard self.emptyContainer.isHidden == false, !self.exportHTMLButton.isEnabled && !self.exportBundleButton.isEnabled else { exit(10) }
                     try render("project-empty", width: 1080, height: 760)
@@ -345,6 +348,50 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         project = remaining; editingCardID = remaining.reviewCards.last?.id
         try persist(); refresh()
         print("CARD_DELETION_SMOKE_OK · middle/last/all, selection, save/reopen, busy guard, failed-write rollback")
+    }
+
+    private func verifyScreenshotCards(store demoStore: ProjectStore, image: CGImage) throws {
+        let saved = project, savedStore = store, selected = editingCardID
+        defer { project = saved; store = savedStore; editingCardID = selected; reviewSaveFailed = false; refresh() }
+        project = ProjectManifest(title: "Screenshot UI", screenshotCardVersion: 1); store = demoStore
+        let ids = [UUID(), UUID(), UUID()]
+        try addAnchor(id: ids[0], image: image, timestamp: 2, kind: .pen, endTimestamp: 4, store: demoStore)
+        try addAnchor(id: ids[1], image: image, timestamp: 10, kind: .pen, endTimestamp: 12, store: demoStore)
+        try addAnchor(id: ids[2], image: image, timestamp: 20, kind: .bookmark, store: demoStore)
+        try addAnchor(id: ids[0], image: image, timestamp: 2, kind: .pen, endTimestamp: 4, store: demoStore)
+        guard project?.reviewCards.count == 3, try demoStore.load().reviewCards.count == 3 else { exit(51) }
+        let segment = TranscriptSegment(text: "甲。乙。丙。", startSeconds: 1, endSeconds: 22,
+            words: [TranscriptWord(text: "甲。", startSeconds: 1, endSeconds: 3),
+                TranscriptWord(text: "乙。", startSeconds: 9, endSeconds: 11),
+                TranscriptWord(text: "丙。", startSeconds: 20, endSeconds: 22)])
+        project?.asrChunks = [ASRChunk(relativePath: "audio/stub.wav", startSeconds: 0, durationSeconds: 23,
+            state: .complete, sentences: [segment])]
+        // Deliberately absent media: completing ASR must not try to extract frames.
+        project?.recording = RecordingInfo(relativePath: "absent.mov", durationSeconds: 23)
+        completeTranscription()
+        guard table.numberOfRows == 3, project?.reviewCards.map(\.text) == ["甲。", "乙。", "丙。"],
+              project?.anchors.count == 3 else { exit(52) }
+        table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false); loadCard()
+        let chosen = project!.reviewCards[1].id
+        let original = project
+        store = ProjectStore(folderURL: demoStore.folderURL.appendingPathComponent("frames/demo.png"))
+        do { try attachManualFrame(image: image, timestamp: 10.5, cardID: chosen); exit(53) }
+        catch { guard project == original, editingCardID == chosen else { exit(54) } }
+        transcriptEditor.string = "存储失败仍保留的编辑"
+        textDidChange(Notification(name: NSText.didChangeNotification))
+        guard reviewSaveFailed, !commitTiming(), project?.reviewCards[1].text == transcriptEditor.string else { exit(55) }
+        store = demoStore
+        guard commitTiming(), !reviewSaveFailed else { exit(56) }
+        try attachManualFrame(image: image, timestamp: 10.5, cardID: chosen)
+        refresh()
+        guard project?.reviewCards.count == 3, project?.anchors.count == 4,
+              project?.anchors.last?.source == .manualExtraction,
+              project?.reviewCards[1].frameIDs.count == 1,
+              project?.reviewCards[0].frameIDs == [ids[0]],
+              project?.cardsForExport == project?.reviewCards else { exit(57) }
+        project?.reconcileScreenshotCards()
+        guard project?.reviewCards[1].text == "存储失败仍保留的编辑", project?.reviewCards.count == 3 else { exit(58) }
+        print("SCREENSHOT_CARD_UI_OK · independent cards, no automatic frames, atomic manual extraction and failed-save protection")
     }
 
     /// Exercises onboarding without asking for real OS permission, writing a
@@ -495,6 +542,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         for (title, action, key) in [("新建录制…", #selector(startRecording), "n"), ("打开项目…", #selector(openProject), "o"), ("保存卡片", #selector(saveCard), "s"), ("导出 HTML…", #selector(exportHTML), "e")] {
             let item = file.addItem(withTitle: title, action: action, keyEquivalent: key); item.target = self
         }
+        file.addItem(withTitle: "原始转写…", action: #selector(showSourceTranscript), keyEquivalent: "").target = self
         fileItem.submenu = file
         let editItem = NSMenuItem(); menu.addItem(editItem); let edit = NSMenu(title: "编辑")
         edit.addItem(withTitle: "撤销", action: Selector(("undo:")), keyEquivalent: "z")
@@ -655,8 +703,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         startField.widthAnchor.constraint(equalToConstant: 76).isActive = true
         endField.widthAnchor.constraint(equalToConstant: 76).isActive = true
         startField.delegate = self; endField.delegate = self
-        let save = button("保存时间", #selector(saveCard), idleOnly: true); save.controlSize = .small
-        let timing = row([caption("秒"), startField, caption("—"), endField, InterfaceStyle.spacer(), save])
+        let details = button("关联详情…", #selector(showAssociationDetails), idleOnly: true); details.controlSize = .small
+        let source = button("原始转写…", #selector(showSourceTranscript), idleOnly: true); source.controlSize = .small
+        let timing = row([caption("讲解 / 秒"), startField, caption("—"), endField, InterfaceStyle.spacer()])
         framePicker.target = self; framePicker.action = #selector(selectFrame)
         framePicker.setAccessibilityLabel("卡片截图，选择后自动保存，再次选择即替换")
         framePicker.toolTip = "选择截图即保存；再次选择会替换当前卡片的配图。"
@@ -676,9 +725,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         clear.controlSize = .small
         let images = row([framePicker])
         frameTimeField.widthAnchor.constraint(equalToConstant: 74).isActive = true; frameTimeField.setAccessibilityLabel("从录屏取图的时间，秒")
-        let extract = button("提取", #selector(extractManualFrame), idleOnly: true); extract.controlSize = .small
+        let extract = button("提取截图", #selector(extractManualFrame), idleOnly: true); extract.controlSize = .small
         let extraction = row([caption("取图 / 秒"), frameTimeField, extract, InterfaceStyle.spacer(), clear])
-        return InterfaceStyle.column([title, textScroll, timing, InterfaceStyle.separator(),
+        return InterfaceStyle.column([title, textScroll, timing, row([details, source, InterfaceStyle.spacer()]), InterfaceStyle.separator(),
             sectionHeading("画面与标注", symbol: "photo"), previewSurface, attachmentLabel, images, extraction], spacing: 9)
     }
 
@@ -765,6 +814,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         case #selector(playRecording), #selector(transcribe): return project?.recording != nil && !recordingNeverStarted
         case #selector(exportHTML), #selector(exportBundle): return project?.hasExportableCards == true
         case #selector(saveCard), #selector(deleteCard): return cardIndex != nil
+        case #selector(showAssociationDetails): return cardIndex != nil
+        case #selector(showSourceTranscript): return project != nil
         case #selector(clearFrames): return cardIndex.map { !(project?.reviewCards[$0].frameIDs.isEmpty ?? true) } ?? false
         case #selector(selectFrame): return cardIndex != nil && framePicker.selectedItem != nil
         case #selector(extractManualFrame): return cardIndex != nil && project?.recording != nil
@@ -789,7 +840,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         } else {
             transcribeButton.title = (project?.asrChunks.contains { $0.state == .failed || $0.state == .pending } ?? false) ? "继续 / 重试转写" : "开始转写"
         }
-        transcribeButton.toolTip = "qwen-audio-3.0-asr-flash · 校验完整句/词时间戳后才标记完成。"
+        transcribeButton.toolTip = "保留真实句/词时间；缺失时间的原文可在「原始转写」中查看和校对。"
         let count = project?.reviewCards.count ?? 0
         cardCount.stringValue = "卡片 · \(count)"
         workspaceTitle.stringValue = project?.title ?? "把想法讲清楚"
@@ -836,6 +887,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         do {
             guard !FileManager.default.fileExists(atPath: folder.path) else { throw ProjectError.projectAlreadyExists }
             let newStore = ProjectStore(folderURL: folder); project = try newStore.create(title: folder.deletingPathExtension().lastPathComponent); store = newStore
+            project?.screenshotCardVersion = 1
             let index = screenPicker.indexOfSelectedItem
             guard screens.indices.contains(index), let id = screens[index].deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber else { return }
             editingCardID = nil; timingDirty = false; refresh()
@@ -862,7 +914,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     }
     @objc private func stopRecording() {
         guard recorder.isRecording else { return }
-        if drawing != nil { drawing?.done() }
+        if let drawing = drawing, !drawing.done() { return }
         stopButton.isEnabled = false; timer?.invalidate(); timer = nil
         project?.captureState = .finishing; project?.recording?.durationSeconds = recorder.elapsedSeconds
         do { try persist() } catch { fail(error) }
@@ -879,10 +931,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                         switch inspection {
                         case .success(let report):
                             self.project?.captureState = .complete
-                            if self.project?.reviewCards.isEmpty == true {
-                                let placeholders = self.project?.anchors.map { ReviewCard(text: "", frameIDs: [$0.id], startSeconds: $0.timestamp, endSeconds: $0.timestamp) } ?? []
-                                self.project?.reviewCards = placeholders
-                            }
+                            self.project?.reconcileScreenshotCards()
                             do { try self.persist() } catch {
                                 self.automaticGate.cancel(); self.setBusy(false, status: "保存项目失败，自动转写未启动；录音已保留。")
                                 self.fail(error); return
@@ -996,11 +1045,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
     @objc private func mark() { captureAnchor(draw: false) }
     @objc private func pen() { captureAnchor(draw: true) }
     private func captureAnchor(draw: Bool) {
-        guard recorder.isRecording, !pendingScreenshot, drawing == nil, let store = store else { return }
+        guard recorder.isRecording, !pendingScreenshot, drawing == nil, let store = store, let projectID = project?.id else { return }
+        let eventID = UUID()
         pendingScreenshot = true
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
             guard let self = self else { return }; defer { self.pendingScreenshot = false }
-            guard self.recorder.isRecording else { return }
+            guard self.recorder.isRecording, self.project?.id == projectID else { return }
             do {
                 let visual = try VisualCapture.screen(displayID: self.selectedDisplay, belowWindowID: CGWindowID(self.toolbar.windowNumber)); let timestamp = self.recorder.elapsedSeconds
                 if draw {
@@ -1008,27 +1058,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
                         throw NSError(domain: "PointAndTell", code: 24, userInfo: [NSLocalizedDescriptionKey: "录制屏幕已断开，无法打开画笔。请结束录制并重新选择屏幕。"])
                     }
                     self.drawing = DrawingOverlay(image: visual.image, screen: screen) { [weak self] result in
-                        guard let self = self else { return }; self.drawing = nil
-                        do { if let image = try result.get() { try self.addAnchor(image: image, timestamp: timestamp, kind: .pen, pointer: visual.pointer, endTimestamp: max(timestamp, self.recorder.elapsedSeconds), store: store) } } catch { self.fail(error) }
+                        guard let self = self, self.project?.id == projectID else { return }
+                        if let image = try result.get() { try self.addAnchor(id: eventID, image: image, timestamp: timestamp, kind: .pen, pointer: visual.pointer, endTimestamp: max(timestamp, self.recorder.elapsedSeconds), store: store) }
+                        self.drawing = nil
                         if self.recorder.isRecording { self.toolbar.orderFrontRegardless() }
                     }; self.drawing?.show()
                 } else {
-                    try self.addAnchor(image: visual.image, timestamp: timestamp, kind: .bookmark, pointer: visual.pointer, store: store); self.toolbar.orderFrontRegardless()
+                    try self.addAnchor(id: eventID, image: visual.image, timestamp: timestamp, kind: .bookmark, pointer: visual.pointer, store: store); self.toolbar.orderFrontRegardless()
                 }
             } catch { self.toolbar.orderFrontRegardless(); self.fail(error) }
         }
     }
-    private func addAnchor(image: CGImage, timestamp: Double, kind: AnchorKind, pointer: NormalizedPoint? = nil, endTimestamp: Double? = nil, store: ProjectStore) throws {
-        let id = UUID(); let relative = "frames/\(id.uuidString).png"
+    private func addAnchor(id: UUID = UUID(), image: CGImage, timestamp: Double, kind: AnchorKind, pointer: NormalizedPoint? = nil, endTimestamp: Double? = nil, store: ProjectStore) throws {
+        guard self.store?.folderURL == store.folderURL, var updated = project,
+              !updated.anchors.contains(where: { $0.id == id }) else { return }
+        let relative = "frames/\(id.uuidString).png"
         try VisualCapture.save(image, to: try store.resolveRelativePath(relative, requireExisting: false), pointer: kind == .bookmark ? pointer : nil)
-        project?.anchors.append(VisualAnchor(id: id, timestamp: timestamp, imageRelativePath: relative, kind: kind, pointer: pointer, endTimestamp: endTimestamp)); try persist()
+        let anchor = VisualAnchor(id: id, timestamp: timestamp, imageRelativePath: relative, kind: kind,
+            pointer: pointer, endTimestamp: endTimestamp,
+            source: kind == .pen ? .recordingPen : .recordingBookmark)
+        updated.registerRecordingAnchor(anchor)
+        try store.save(updated); project = updated
     }
 
     @objc private func openProject() {
         guard !busy, commitTiming() else { return }; let panel = NSOpenPanel(); panel.canChooseDirectories = true; panel.canChooseFiles = false; panel.title = "选择 .pointtell 项目文件夹"
         guard panel.runModal() == .OK, let url = panel.url else { return }
         do { let chosen = ProjectStore(folderURL: url); let loaded = try chosen.load(); closePlayback(); project = loaded; store = chosen; editingCardID = nil; timingDirty = false
-            if project?.groupReviewCards() == true { try persist() }
+            project?.enableScreenshotCards()
+            project?.reconcileScreenshotCards()
+            try persist()
             if let recording = project?.recording, let movie = try? chosen.resolveRelativePath(recording.relativePath, requireExisting: true) {
                 let duration = AVURLAsset(url: movie).duration.seconds
                 if duration.isFinite && duration > 0 { project?.recording?.durationSeconds = duration; try persist() }
@@ -1118,7 +1177,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
 
     private func processNextChunk(apiKey: String) {
         guard !cancelRequested else { finishASR(cancelled: true); return }
-        guard let index = project?.asrChunks.firstIndex(where: { $0.state == .pending || $0.state == .failed }), let store = store else { buildReviewFrames(); return }
+        guard let index = project?.asrChunks.firstIndex(where: { $0.state == .pending || $0.state == .failed }), let store = store else { completeTranscription(); return }
         guard let chunk = project?.asrChunks[index] else { return }
         report("WAV 检查：片段 \(chunk.index + 1)，正在确认实际上传文件可解码及电平…")
         DispatchQueue.global(qos: .utility).async { [weak self] in
@@ -1197,59 +1256,43 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         if project?.captureState == .processing { project?.captureState = captureStateBeforeASR ?? .complete }
         try? persist(); cancelASRButton.isEnabled = false; setBusy(false, status: cancelled ? "转写已取消。已完成的片段保留，下次会继续未完成片段。" : "转写处理已停止。请检查片段状态；重试只发送未完成或失败的片段。"); refresh()
     }
-    private func buildReviewFrames() {
-        guard let store = store, let recording = project?.recording else { finishASR(cancelled: false); return }
+    private func completeTranscription() {
         let segments = project?.asrChunks.sorted(by: { $0.index < $1.index }).flatMap { $0.sentences } ?? []
-        project?.transcripts = segments; project?.captureState = .processing; try? persist()
-        report("转写已返回，正在从本地录屏提取配图…")
-        let snapshot = project!
-        DispatchQueue.global(qos: .utility).async { [weak self] in
-            var added: [VisualAnchor] = []; var warning: String?
-            do {
-                let movie = try store.resolveRelativePath(recording.relativePath, requireExisting: true)
-                for segment in segments where segment.isTimed {
-                    if DispatchQueue.main.sync(execute: { self?.cancelRequested ?? true }) { break }
-                    guard let start = segment.startSeconds, let end = segment.endSeconds else { continue }
-                    let count = max(1, Int(min(12, ceil((end - start) / 15))))
-                    for offset in 0..<count {
-                        let timestamp = start + (end - start) * (Double(offset) + 0.5) / Double(count)
-                        if snapshot.anchors.contains(where: { abs($0.timestamp - timestamp) < 1 }) { continue }
-                        guard timestamp <= recording.durationSeconds else { warning = "部分句子时间超出录屏范围，请手动校对时间和配图"; continue }
-                        let anchor: VisualAnchor = try autoreleasepool {
-                            let (image, actual) = try VisualCapture.movieFrame(url: movie, at: timestamp)
-                            let id = UUID(); let relative = "frames/\(id.uuidString).png"
-                            try VisualCapture.save(image, to: store.resolveRelativePath(relative, requireExisting: false))
-                            return VisualAnchor(id: id, timestamp: actual, imageRelativePath: relative)
-                        }
-                        added.append(anchor)
-                    }
-                }
-            } catch { warning = error.localizedDescription }
-            DispatchQueue.main.async {
-                guard let self = self else { return }; self.project?.anchors.append(contentsOf: added)
-                if self.cancelRequested { self.finishASR(cancelled: true); return }
-                // Keep existing user-reviewed cards on retry; only append newly transcribed segments.
-                self.project?.reviewCards.removeAll { $0.transcriptID == nil && $0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-                self.project?.appendSuggestedReviewCards(for: segments)
-                self.project?.captureState = self.captureStateBeforeASR ?? .complete; do { try self.persist() } catch { self.fail(error) }
-                self.automaticTranscription = false
-                self.cancelASRButton.isEnabled = false; self.setBusy(false, status: warning.map { "转写完成，但部分截图失败：\($0)。请手动取图后导出。" } ?? "转写与配图已准备好。请校对文字、时间和图片，再导出。无时间戳的句子需要手动配图。")
-                self.refresh(); if !(self.project?.reviewCards.isEmpty ?? true) { self.table.selectRowIndexes(IndexSet(integer: 0), byExtendingSelection: false) }
-            }
+        project?.transcripts = segments
+        project?.reconcileScreenshotCards()
+        project?.captureState = captureStateBeforeASR ?? .complete
+        automaticTranscription = false; cancelASRButton.isEnabled = false
+        do {
+            try persist()
+            setBusy(false, status: "转写已保存。截图卡片保持独立，请校对讲解；未关联内容可在原始转写中查看。")
+        } catch {
+            setBusy(false, status: "转写保留在内存中，但项目保存失败；请修复存储后重试保存。")
+            reviewSaveFailed = true; fail(error)
         }
+        refresh()
     }
 
     func textDidChange(_ notification: Notification) {
         guard !busy, let id = editingCardID, let index = project?.reviewCards.firstIndex(where: { $0.id == id }) else { return }
         project?.reviewCards[index].text = transcriptEditor.string
-        do { try persist(); savedLabel.stringValue = "文字已保存"; updateVisibleCard(at: index) }
-        catch { savedLabel.stringValue = "保存失败"; report("保存文字失败：\(error.localizedDescription)") }
+        project?.reviewCards[index].userEdited = true
+        do { try persist(); reviewSaveFailed = false; savedLabel.stringValue = "文字已保存"; updateVisibleCard(at: index) }
+        catch { reviewSaveFailed = true; savedLabel.stringValue = "保存失败"; report("保存文字失败：\(error.localizedDescription)") }
     }
     func controlTextDidChange(_ notification: Notification) {
         guard let field = notification.object as? NSTextField, field === startField || field === endField else { return }
         timingDirty = true; savedLabel.stringValue = "时间待保存"
     }
+    func controlTextDidEndEditing(_ notification: Notification) {
+        guard let field = notification.object as? NSTextField,
+              field === startField || field === endField else { return }
+        _ = commitTiming()
+    }
     @discardableResult private func commitTiming() -> Bool {
+        if reviewSaveFailed {
+            do { try persist(); reviewSaveFailed = false }
+            catch { savedLabel.stringValue = "保存失败"; report("请先恢复项目存储后重试，当前编辑仍保留。"); return false }
+        }
         guard timingDirty, let id = editingCardID, let index = project?.reviewCards.firstIndex(where: { $0.id == id }) else { return true }
         let a = startField.stringValue.trimmingCharacters(in: .whitespaces), b = endField.stringValue.trimmingCharacters(in: .whitespaces)
         let start = a.isEmpty ? nil : Double(a), end = b.isEmpty ? nil : Double(b)
@@ -1261,6 +1304,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
             window.makeFirstResponder(startField); NSSound.beep(); return false
         }
         project?.reviewCards[index].startSeconds = start; project?.reviewCards[index].endSeconds = end
+        project?.reviewCards[index].userEdited = true
         do { try persist(); timingDirty = false; savedLabel.stringValue = "已保存"; updateVisibleCard(at: index); return true }
         catch { savedLabel.stringValue = "保存失败"; report(error.localizedDescription); return false }
     }
@@ -1291,8 +1335,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
         startField.stringValue = card.startSeconds.map { String(format: "%.3f", $0) } ?? ""
         endField.stringValue = card.endSeconds.map { String(format: "%.3f", $0) } ?? ""
         cardInfo.stringValue = "讲解 \(String(format: "%02d", index + 1))"
+        cardInfo.toolTip = card.userEdited == true ? "已手动校对，转写重试保留当前内容" : card.association?.summary
         savedLabel.stringValue = "文字自动保存"
-        attachmentLabel.stringValue = card.frameIDs.isEmpty ? "尚未配图 · 选择截图后自动保存" : "已配 \(card.frameIDs.count) 张图 · 选择其他截图即替换"
+        attachmentLabel.stringValue = card.association.map {
+            card.userEdited == true ? "已手动校对 · 选择截图即替换" : $0.summary
+        } ?? (card.frameIDs.isEmpty ? "尚未配图 · 选择截图后自动保存" : "已配 \(card.frameIDs.count) 张图 · 选择其他截图即替换")
         restoreFrameSelection(); updateInterface()
     }
     @objc private func saveCard() {
@@ -1361,18 +1408,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSTableViewDataSource,
               project?.anchors.contains(where: { $0.id == id }) == true else { restoreFrameSelection(); return }
         guard commitTiming() else { restoreFrameSelection(); return }
         let previous = project?.reviewCards[index].frameIDs ?? []
+        let previouslyEdited = project?.reviewCards[index].userEdited
         project?.reviewCards[index].frameIDs = [id]
+        project?.reviewCards[index].userEdited = true
         do {
             try persist(); loadCard(); updateVisibleCard(at: index); savedLabel.stringValue = "配图已保存"
         } catch {
             project?.reviewCards[index].frameIDs = previous
+            project?.reviewCards[index].userEdited = previouslyEdited
             restoreFrameSelection(); savedLabel.stringValue = "配图保存失败"; fail(error)
         }
     }
-    @objc private func clearFrames() { guard !busy, commitTiming(), let index = cardIndex else { return }; project?.reviewCards[index].frameIDs = []; do { try persist(); loadCard(); updateVisibleCard(at: index) } catch { fail(error) } }
+    @objc private func clearFrames() {
+        guard !busy, commitTiming(), let index = cardIndex, let store = store, var updated = project else { return }
+        updated.reviewCards[index].frameIDs = []; updated.reviewCards[index].userEdited = true
+        do { try store.save(updated); project = updated; loadCard(); updateVisibleCard(at: index) } catch { fail(error) }
+    }
     @objc private func extractManualFrame() {
         guard !busy, commitTiming(), let index = cardIndex, let store = store, let recording = project?.recording, let timestamp = Double(frameTimeField.stringValue), timestamp.isFinite, timestamp >= 0, timestamp <= recording.durationSeconds else { report("请选择卡片，并输入录制范围内的秒数。"); return }
-        do { let (image, actual) = try VisualCapture.movieFrame(url: store.resolveRelativePath(recording.relativePath, requireExisting: true), at: timestamp); try addAnchor(image: image, timestamp: actual, kind: .frame, store: store); if let id = project?.anchors.last?.id { project?.reviewCards[index].frameIDs.append(id) }; try persist(); refresh(); loadCard() } catch { fail(error) }
+        do {
+            let (image, actual) = try VisualCapture.movieFrame(url: store.resolveRelativePath(recording.relativePath, requireExisting: true), at: timestamp)
+            try attachManualFrame(image: image, timestamp: actual, cardID: project!.reviewCards[index].id)
+            refresh()
+        } catch { fail(error) }
+    }
+    private func attachManualFrame(image: CGImage, timestamp: Double, cardID: UUID) throws {
+        guard let store = store, var updated = project,
+              let index = updated.reviewCards.firstIndex(where: { $0.id == cardID }),
+              editingCardID == cardID else { return }
+        let id = UUID(), relative = "frames/\(UUID().uuidString).png"
+        let url = try store.resolveRelativePath(relative)
+        try VisualCapture.save(image, to: url)
+        updated.anchors.append(VisualAnchor(id: id, timestamp: timestamp, imageRelativePath: relative,
+            kind: .frame, source: .manualExtraction))
+        updated.reviewCards[index].frameIDs = [id]
+        updated.reviewCards[index].userEdited = true
+        do { try store.save(updated); project = updated }
+        catch { try? FileManager.default.removeItem(at: url); throw error }
+    }
+    @objc private func showAssociationDetails() {
+        guard let index = cardIndex, let card = project?.reviewCards[index], commitTiming() else { return }
+        var lines: [String] = []
+        if card.userEdited == true { lines.append("已手动校对：以下为上次自动关联依据，重试不会覆盖你的修改。") }
+        if let association = card.association {
+            lines.append(association.summary)
+            lines.append(String(format: "截图：%.3f 秒（录制媒体时钟）", association.screenshotSeconds))
+            if let end = association.annotationEndSeconds { lines.append(String(format: "画笔区间：%.3f–%.3f 秒", association.screenshotSeconds, end)) }
+            for match in association.matches {
+                lines.append(String(format: "语音：%.3f–%.3f 秒；相对截图偏移 %+.3f 秒；%@级",
+                    match.startSeconds, match.endSeconds, match.offsetSeconds, match.precision == "word" ? "词" : "句"))
+            }
+            lines.append(contentsOf: association.reasons)
+            lines.append("时间关联需要人工核对语义。截图精度受录制帧率和采集缓冲影响，显示毫秒不代表毫秒级准确。")
+        } else { lines.append("历史或手动卡片：保留原有文字、时间和配图，没有新增自动关联依据。") }
+        let alert = NSAlert(); alert.messageText = "讲解关联详情"
+        alert.accessoryView = transcriptScroll(text: lines.joined(separator: "\n\n"), width: 580, height: 280)
+        alert.runModal()
+    }
+    @objc private func showSourceTranscript() {
+        guard !busy, commitTiming(), let project = project else { return }
+        let text = project.transcripts.enumerated().map { index, segment in
+            let timing = segment.isTimed ? String(format: "%.3f–%.3f 秒", segment.startSeconds!, segment.endSeconds!) : "没有可靠时间戳"
+            let precision = segment.hasCompleteWordTiming ? "词级" : (segment.isTimed ? "句级" : "未定时")
+            let words = (segment.words ?? []).map {
+                String(format: "%.3f–%.3f  %@", $0.startSeconds, $0.endSeconds, $0.text)
+            }.joined(separator: "\n")
+            return "\(index + 1). \(timing) · \(precision)\n\(segment.text)" + (words.isEmpty ? "" : "\n\n供应商词时间（录制坐标）：\n" + words)
+        }.joined(separator: "\n\n────────\n\n")
+        let panel = transcriptSourceWindow ?? NSWindow(contentRect: NSRect(x: 170, y: 170, width: 680, height: 480),
+            styleMask: [.titled, .closable, .resizable], backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false; panel.title = "原始转写 · 含未关联内容"
+        panel.contentView = transcriptScroll(text: text.isEmpty ? "尚无转写结果。截图卡片已独立保存。" : text, width: 680, height: 480)
+        transcriptSourceWindow = panel; panel.makeKeyAndOrderFront(nil)
+    }
+    private func transcriptScroll(text: String, width: CGFloat, height: CGFloat) -> NSScrollView {
+        let scroll = NSScrollView(frame: NSRect(x: 0, y: 0, width: width, height: height))
+        let view = NSTextView(frame: scroll.bounds); view.string = text; view.isEditable = false
+        view.isRichText = false; view.isSelectable = true; view.font = .systemFont(ofSize: 12)
+        view.textContainerInset = NSSize(width: 12, height: 12); view.isVerticallyResizable = true
+        view.isHorizontallyResizable = false; view.autoresizingMask = .width
+        view.textContainer?.widthTracksTextView = true
+        scroll.documentView = view; scroll.hasVerticalScroller = true; scroll.autoresizingMask = [.width, .height]
+        return scroll
     }
     @objc private func exportHTML() { export(bundle: false) }
     @objc private func exportBundle() { export(bundle: true) }

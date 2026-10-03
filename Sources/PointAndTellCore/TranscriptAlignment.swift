@@ -13,6 +13,12 @@ public struct TranscriptMoment: Codable, Equatable {
 public enum TranscriptAlignment {
     public static func moments(card: ReviewCard, transcript: TranscriptSegment?,
                                anchors: [VisualAnchor]) -> [TranscriptMoment] {
+        if card.sourceAnchorID != nil {
+            let available = Set(anchors.map(\.id))
+            return [TranscriptMoment(text: card.text, startSeconds: card.startSeconds,
+                endSeconds: card.endSeconds, imageIDs: card.frameIDs.filter { available.contains($0) },
+                timingPrecision: card.isAutomaticallyManaged ? (card.association?.precision ?? "untimed") : "manual")]
+        }
         var seen = Set<UUID>()
         let selected = anchors.filter { card.frameIDs.contains($0.id) && seen.insert($0.id).inserted }
             .sorted { $0.timestamp == $1.timestamp
@@ -89,7 +95,7 @@ public enum TranscriptAlignment {
     /// Match the entire original text. Only whitespace may be absent from provider
     /// tokens; preserve it in the slices. Edits, missing tokens and punctuation
     /// mismatches deliberately fall back to sentence-level timing.
-    private static func exactSlices(text: String, words: [TranscriptWord], start: Double, end: Double) -> [String]? {
+    static func exactSlices(text: String, words: [TranscriptWord], start: Double, end: Double) -> [String]? {
         var cursor = text.startIndex
         var slices: [String] = []
         var previousStart = start, previousEnd = start

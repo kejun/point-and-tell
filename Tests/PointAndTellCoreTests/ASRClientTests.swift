@@ -32,7 +32,7 @@ final class ASRClientTests: XCTestCase {
         XCTAssertEqual(ASRProvider.documentationURL.absoluteString, "https://www.qianwenai.com/models/qwen-audio-3.0-asr-flash")
     }
 
-    func testTextOnlyPartialLastSentenceAndMissingWordTimingCannotCompleteAChunk() {
+    func testFinalTextAndActualTimingGranularityArePreservedWithoutBilledRetry() {
         let cases = [ASRFixtures.missingTimingJSON, ASRFixtures.partialTimingJSON, ASRFixtures.fullTextJSON,
             #"{"output":{"text":"Only text"}}"#,
             #"{"output":{"sentence":{"text":"No words","begin_time":100,"end_time":1000,"sentence_end":true}}}"#,
@@ -43,8 +43,10 @@ final class ASRClientTests: XCTestCase {
             transport.response = .success(ASRHTTPResponse(statusCode: 200, data: Data(body.utf8), contentType: "application/json"))
             let done = expectation(description: "timestamp validation")
             ASRClient(transport: transport).transcribe(wav: ASRFixtures.tinyWAV, apiKey: "offline-test-key") { result in
-                if case .failure(let error) = result { XCTAssertEqual(error as? ASRError, .incompleteTimestamps) }
-                else { XCTFail("Untimed/partially timed result must not become completed cached ASR") }
+                if case .success(let sentences) = result {
+                    XCTAssertFalse(sentences.isEmpty)
+                    XCTAssertTrue(sentences.contains { !$0.transcriptSegment(chunkOffset: 0).hasCompleteWordTiming })
+                } else { XCTFail("Final source text must remain available for manual review") }
                 done.fulfill()
             }
             wait(for: [done], timeout: 2)

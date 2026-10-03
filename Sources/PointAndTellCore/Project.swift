@@ -16,6 +16,10 @@ public enum AnchorKind: String, Codable, Sendable {
     }
 }
 
+public enum AnchorSource: String, Codable, Sendable {
+    case recordingBookmark, recordingPen, manualExtraction, legacyAutomatic
+}
+
 public struct NormalizedPoint: Codable, Equatable, Sendable {
     public var x: Double
     public var y: Double
@@ -48,11 +52,19 @@ public struct VisualAnchor: Codable, Equatable, Identifiable, Sendable {
     /// For pen anchors, the annotation remains relevant while this interval is active.
     /// timestamp remains the source screenshot's recording time.
     public var endTimestamp: Double?
+    public var source: AnchorSource?
+
+    public var isRecordingScreenshot: Bool {
+        if let source = source { return source == .recordingBookmark || source == .recordingPen }
+        return kind == .bookmark || kind == .pen
+    }
 
     public init(id: UUID = UUID(), timestamp: Double, imageRelativePath: String,
-                kind: AnchorKind = .frame, pointer: NormalizedPoint? = nil, endTimestamp: Double? = nil) {
+                kind: AnchorKind = .frame, pointer: NormalizedPoint? = nil, endTimestamp: Double? = nil,
+                source: AnchorSource? = nil) {
         self.id = id; self.timestamp = timestamp; self.imageRelativePath = imageRelativePath
         self.kind = kind; self.pointer = pointer; self.endTimestamp = endTimestamp
+        self.source = source
     }
 }
 
@@ -123,11 +135,20 @@ public struct ReviewCard: Codable, Equatable, Identifiable, Sendable {
     public var frameIDs: [UUID]
     public var startSeconds: Double?
     public var endSeconds: Double?
+    /// Stable screenshot event identity, independent of ASR sentence identities.
+    public var sourceAnchorID: UUID?
+    public var association: ScreenshotAssociation?
+    public var generatedContent: ReviewCardContent?
+    public var userEdited: Bool?
 
     public init(id: UUID = UUID(), transcriptID: UUID? = nil, text: String,
-                frameIDs: [UUID] = [], startSeconds: Double? = nil, endSeconds: Double? = nil) {
+                frameIDs: [UUID] = [], startSeconds: Double? = nil, endSeconds: Double? = nil,
+                sourceAnchorID: UUID? = nil, association: ScreenshotAssociation? = nil,
+                generatedContent: ReviewCardContent? = nil, userEdited: Bool? = nil) {
         self.id = id; self.transcriptID = transcriptID; self.text = text
         self.frameIDs = frameIDs; self.startSeconds = startSeconds; self.endSeconds = endSeconds
+        self.sourceAnchorID = sourceAnchorID; self.association = association
+        self.generatedContent = generatedContent; self.userEdited = userEdited
     }
 
     public var isTimed: Bool {
@@ -151,7 +172,7 @@ public struct ASRChunk: Codable, Equatable, Identifiable, Sendable {
     public var diagnostic: ASRDiagnostic?
 
     public var needsTimestampRetry: Bool {
-        state == .complete && (sentences.isEmpty || sentences.contains { !$0.hasCompleteWordTiming })
+        state == .complete && (sentences.isEmpty || sentences.contains { !$0.isTimed })
     }
 
     public init(id: UUID = UUID(), index: Int = 0, relativePath: String, startSeconds: Double,
@@ -193,8 +214,10 @@ public struct ASRChunk: Codable, Equatable, Identifiable, Sendable {
 /// from a legacy project that has not materialized transcript cards yet.
 public struct ReviewEdits: Codable, Equatable, Sendable {
     public var suppressedTranscriptIDs: [UUID]
-    public init(suppressedTranscriptIDs: [UUID] = []) {
+    public var suppressedAnchorIDs: [UUID]?
+    public init(suppressedTranscriptIDs: [UUID] = [], suppressedAnchorIDs: [UUID]? = nil) {
         self.suppressedTranscriptIDs = suppressedTranscriptIDs
+        self.suppressedAnchorIDs = suppressedAnchorIDs
     }
 }
 
@@ -210,15 +233,18 @@ public struct ProjectManifest: Codable, Equatable, Identifiable, Sendable {
     public var reviewCards: [ReviewCard]
     public var asrChunks: [ASRChunk]
     public var reviewEdits: ReviewEdits?
+    /// nil is the legacy transcript-first layout. Stored cards remain authoritative.
+    public var screenshotCardVersion: Int?
 
     public init(id: UUID = UUID(), title: String, createdAt: Date = Date(), recording: RecordingInfo? = nil,
                 captureState: CaptureState = .idle, anchors: [VisualAnchor] = [],
                 transcripts: [TranscriptSegment] = [], reviewCards: [ReviewCard] = [], asrChunks: [ASRChunk] = [],
-                reviewEdits: ReviewEdits? = nil) {
+                reviewEdits: ReviewEdits? = nil, screenshotCardVersion: Int? = nil) {
         self.schemaVersion = 1; self.id = id; self.title = title; self.createdAt = createdAt
         self.recording = recording; self.captureState = captureState; self.anchors = anchors
         self.transcripts = transcripts; self.reviewCards = reviewCards; self.asrChunks = asrChunks
         self.reviewEdits = reviewEdits
+        self.screenshotCardVersion = screenshotCardVersion
     }
 }
 
@@ -363,6 +389,7 @@ public final class ProjectStore {
         try unique(project.anchors.map(\.id)); try unique(project.transcripts.map(\.id))
         try unique(project.reviewCards.map(\.id)); try unique(project.asrChunks.map(\.id))
         try unique(project.reviewEdits?.suppressedTranscriptIDs ?? [])
+        try unique(project.reviewEdits?.suppressedAnchorIDs ?? [])
         if Set(project.asrChunks.map(\.index)).count != project.asrChunks.count {
             throw ProjectError.invalidManifest("duplicate chunk indices")
         }

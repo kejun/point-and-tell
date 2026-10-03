@@ -5,6 +5,7 @@ import Foundation
 public enum ReviewCardGrouping {
     public static func cards(from card: ReviewCard, transcript: TranscriptSegment?,
                              anchors: [VisualAnchor]) -> [ReviewCard] {
+        if card.sourceAnchorID != nil { return [card] }
         // Keep missing selections visible for repair rather than dropping them.
         let available = Set(anchors.map(\.id))
         guard card.frameIDs.allSatisfy({ available.contains($0) }) else { return [card] }
@@ -32,6 +33,13 @@ public extension ProjectManifest {
         guard let index = reviewCards.firstIndex(where: { $0.id == id }) else { return false }
         let card = reviewCards.remove(at: index)
         if reviewEdits == nil { reviewEdits = ReviewEdits() }
+        if screenshotCardVersion != nil {
+            var suppressed = reviewEdits?.suppressedAnchorIDs ?? []
+            for id in [card.sourceAnchorID].compactMap({ $0 }) + card.frameIDs where !suppressed.contains(id) {
+                suppressed.append(id)
+            }
+            reviewEdits?.suppressedAnchorIDs = suppressed
+        }
         if let transcriptID = card.transcriptID,
            reviewEdits?.suppressedTranscriptIDs.contains(transcriptID) == false {
             reviewEdits?.suppressedTranscriptIDs.append(transcriptID)
@@ -47,10 +55,12 @@ public extension ProjectManifest {
     }
 
     var hasExportableCards: Bool {
-        !reviewCards.isEmpty || (reviewEdits == nil && !transcripts.isEmpty)
+        if screenshotCardVersion != nil { return !reviewCards.isEmpty }
+        return !reviewCards.isEmpty || (reviewEdits == nil && !transcripts.isEmpty)
     }
 
     var cardsForExport: [ReviewCard] {
+        if screenshotCardVersion != nil { return reviewCards }
         if reviewCards.isEmpty {
             return reviewEdits == nil ? FrameMatcher.suggestCards(for: transcripts, anchors: anchors) : []
         }
@@ -58,6 +68,7 @@ public extension ProjectManifest {
     }
 
     mutating func appendSuggestedReviewCards(for segments: [TranscriptSegment]) {
+        if screenshotCardVersion != nil { reconcileScreenshotCards(); return }
         let represented = Set(reviewCards.compactMap(\.transcriptID))
             .union(reviewEdits?.suppressedTranscriptIDs ?? [])
         reviewCards.append(contentsOf: FrameMatcher.suggestCards(
@@ -68,6 +79,7 @@ public extension ProjectManifest {
     /// Idempotent migration for old single-card projects. Edited text/times and
     /// manual selections stay intact; no transcription request is needed.
     @discardableResult mutating func groupReviewCards() -> Bool {
+        if screenshotCardVersion != nil { return reconcileScreenshotCards() }
         let grouped = ReviewCardGrouping.cards(from: reviewCards, transcripts: transcripts, anchors: anchors)
         guard grouped != reviewCards else { return false }
         reviewCards = grouped

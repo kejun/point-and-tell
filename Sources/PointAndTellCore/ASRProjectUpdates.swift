@@ -14,7 +14,10 @@ public extension ProjectManifest {
     /// selected screenshots while allowing untouched placeholders to be rebuilt.
     mutating func acceptTranscription(_ segments: [TranscriptSegment], forChunkAt index: Int) throws {
         guard asrChunks.indices.contains(index) else { throw ProjectError.invalidManifest("missing ASR chunk") }
-        guard !segments.isEmpty, segments.allSatisfy(\.hasCompleteWordTiming) else { throw ASRError.incompleteTimestamps }
+        guard !segments.isEmpty else { throw ASRError.noFinalSentences }
+        if screenshotCardVersion == nil && !segments.allSatisfy(\.hasCompleteWordTiming) {
+            throw ASRError.incompleteTimestamps
+        }
         let previous = asrChunks[index].sentences
         var used = Set<UUID>()
         let replacements = segments.map { incoming -> TranscriptSegment in
@@ -23,6 +26,15 @@ public extension ProjectManifest {
                 segment.id = old.id; used.insert(old.id)
             }
             return segment
+        }
+        if screenshotCardVersion != nil {
+            asrChunks[index].sentences = replacements
+            asrChunks[index].state = .complete
+            asrChunks[index].errorMessage = nil
+            asrChunks[index].diagnostic = nil
+            transcripts = asrChunks.sorted { $0.index < $1.index }.flatMap(\.sentences)
+            reconcileScreenshotCards()
+            return
         }
         // If a deleted sentence's boundary/text changed, its new identity cannot
         // be matched safely. Suppress unmatched replacements in that same chunk

@@ -60,14 +60,13 @@ public struct ASRResult: Equatable {
         self.requestID = requestID
     }
 
-    /// Only a complete, verifiable sentence/word timeline may complete a chunk.
-    /// Parser fallbacks remain available for inspecting old/synthetic responses,
-    /// but text-only or partially timed live replies must not become cached success.
+    /// Preserve final source text even when timing is absent. Matching uses only
+    /// real sentence/word times; untimed results remain visible for manual review.
+    /// The parser still rejects unfinished/truncated SSE and invalid timestamps.
     public func validatedSentences() throws -> [ASRSentence] {
         guard !sentences.isEmpty else { throw ASRError.noFinalSentences }
-        guard sentences.allSatisfy({ $0.transcriptSegment(chunkOffset: 0).hasCompleteWordTiming }) else {
-            throw ASRError.incompleteTimestamps
-        }
+        guard sentences.allSatisfy({ !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty })
+        else { throw ASRError.noFinalSentences }
         return sentences
     }
 }
