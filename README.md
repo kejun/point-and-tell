@@ -22,6 +22,23 @@ See the [release notes](releases/README.md) for verification and rollback detail
 
 The app is ad-hoc signed, **not Apple-notarized**. On macOS 11, extract the ZIP, move the app to Applications, then use Finder → right-click → Open if Gatekeeper asks. Do not disable system security. No Apple Developer account is required to build locally.
 
+### 首次打开：提示“无法验证开发者”
+
+如果 macOS 提示“无法打开 Point & Tell，因为无法验证开发者”，请先确认安装包来自本仓库。当前应用使用 ad-hoc 签名，尚未完成 Apple Developer ID 签名与公证。
+
+1. 解压 ZIP，将 **Point & Tell.app** 拖到「应用程序」文件夹。
+2. 尝试打开一次后，进入 **系统设置 → 隐私与安全性 → 仍要打开**，再确认「打开」。较旧的 macOS 对应 **系统偏好设置 → 安全性与隐私 → 通用**。
+
+也可以在「终端」执行以下命令，然后重新打开应用：
+
+```bash
+xattr -dr com.apple.quarantine "/Applications/Point & Tell.app"
+```
+
+这条命令仅针对上述应用及其内部文件移除下载隔离标记。仅对确认来自本仓库且未遭篡改的安装包使用。若应用位于其他目录，请将命令中的路径替换为实际路径，并保留引号。
+
+参考：[Apple 官方说明：在 Mac 上安全地打开 App](https://support.apple.com/zh-cn/102445)。
+
 ## Use
 
 1. On first launch, complete **屏幕录制**, **麦克风**, and **API Key** in the setup window. Connect a display and microphone, grant the two required permissions, enter your key, and acknowledge that recording completion will upload audio to Alibaba Cloud for potentially billed transcription. The workspace stays locked until ready. The key is saved in the local macOS Keychain, never in project files
