@@ -1,8 +1,26 @@
-<?xml version="1.0" standalone="yes"?><!-- sparkle-sign-warning:
+<?xml version="1.0" standalone="yes"?>
+<!-- sparkle-sign-warning:
 IMPORTANT: This file was signed by Sparkle. Any modifications to this file requires re-signing this file with generate_appcast or sign_update! The signed signature will be embedded at the end of this file.
---><rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
+-->
+<rss xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle" version="2.0">
     <channel>
         <title>Point &amp; Tell</title>
+        <item>
+            <title>0.5.1</title>
+            <pubDate>Sat, 03 Oct 2026 08:23:03 +0000</pubDate>
+            <sparkle:version>13</sparkle:version>
+            <sparkle:shortVersionString>0.5.1</sparkle:shortVersionString>
+            <sparkle:minimumSystemVersion>11.0</sparkle:minimumSystemVersion>
+            <description><![CDATA[<h2>Point &amp; Tell 0.5.1</h2>
+<pre>- Partition the full transcript into the screenshot card count with an ordered local dynamic program. Punctuation, actual pauses and soft timing scores choose boundaries; distant, overlapping and untimed passages no longer fail assignment.
+- Preserve exact source text slices and real word/sentence timing. Text-only subdivisions retain their enclosing sentence interval instead of inventing word times.
+- Add first/last passage moves between adjacent cards, with atomic persistence and protection against busy operations or failed writes. Preserve source references, images, manual timing, edits and deleted-card decisions.
+- Reopen existing projects to regenerate untouched automatic cards without another transcription/upload.
+- Add exact-coverage, Unicode, long-transcript, migration, edit/reopen/export and native movement regressions.
+- Record the user&#x27;s successful 0.5.1 physical Intel test and release acceptance. The known Intel CI pause-screen failure remains visible in its original evidence; a source-pinned acceptance allows this release only. Other failures, changed app inputs and later versions still block release. See docs/PAUSE-RECORDING.md for the verification boundary.</pre>
+]]></description>
+            <enclosure url="https://raw.githubusercontent.com/kejun/point-and-tell/af1b1a5cbf650319f50529849a09debc6cfa2753/releases/v0.5.1/Point-and-Tell-v0.5.1-macOS-universal.zip" length="3890668" type="application/octet-stream" sparkle:edSignature="zievqxsoev7V33rNjucpMR9uON2nYOWPVN0wgVchBFlX2Np5WqB41gTfY5Ni/ccOhZvl2DvoZXG+dQOuV8KpBw=="/>
+        </item>
         <item>
             <title>0.4.0</title>
             <pubDate>Sat, 03 Oct 2026 01:09:42 +0000</pubDate>
@@ -19,10 +37,11 @@ IMPORTANT: This file was signed by Sparkle. Any modifications to this file requi
 
 This source change does not publish an update-enabled download by itself. Configure signing and run the release workflow. Production old-to-new replacement/relaunch and macOS 11 permission/Keychain behavior still require the device checklist.</pre>
 ]]></description>
-            <enclosure url="https://raw.githubusercontent.com/kejun/point-and-tell/240e13fc68a4e6437d89c8027704676ed2f46318/releases/v0.4.0/Point-and-Tell-v0.4.0-macOS-universal.zip" length="3552390" type="application/octet-stream" sparkle:edSignature="6+77VP94KfCqiEv+uSs97lcu8iMiczW23xAgA0OijYUoCKXNmwoaFby4epq5zSy74u/XPOgzXnjXAr1sdlBKDg=="></enclosure>
+            <enclosure url="https://raw.githubusercontent.com/kejun/point-and-tell/240e13fc68a4e6437d89c8027704676ed2f46318/releases/v0.4.0/Point-and-Tell-v0.4.0-macOS-universal.zip" length="3552390" type="application/octet-stream" sparkle:edSignature="6+77VP94KfCqiEv+uSs97lcu8iMiczW23xAgA0OijYUoCKXNmwoaFby4epq5zSy74u/XPOgzXnjXAr1sdlBKDg=="/>
         </item>
     </channel>
-</rss><!-- sparkle-signatures:
-edSignature: ZczSkB1gDY2mw6sI8Jks3+WIUDZakcJJr3Sij+vUNeLLvOBy5uz9TCq2ZokpWr/6onja/jk8kIPdPG6AVZ2dCQ==
-length: 2564
+</rss>
+<!-- sparkle-signatures:
+edSignature: lsZcElDHfuFlP6PtzQxhcdgj/szyZH5jrhd2cF5/gsCjVp3zcvIlJonfGFm9WSgIDR3DZwdptuQ1+hgIm9LoDw==
+length: 4522
 -->
