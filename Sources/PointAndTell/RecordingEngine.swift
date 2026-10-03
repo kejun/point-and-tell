@@ -413,16 +413,15 @@ final class RecordingEngine: NSObject {
         movie.setOutputSettings(nil, for: audio)
         // The native encoder may buffer frames even with B frames disabled.
         // At 5 fps this presented paused-screen frames for 1.6 seconds on Intel.
-        // Bound the compression window as well as disabling reordering, while
-        // retaining the negotiated codec/size/bitrate and hardware selection.
+        // Request timely encoding as well as disabling reordering, retaining
+        // the negotiated codec/size/bitrate and hardware selection. Do not set
+        // MaxFrameDelayCount: AVCaptureMovieFileOutput rejects tight bounds and
+        // its accepted value prevented sample delivery on the tested encoder.
         var videoSettings = movie.outputSettings(for: video)
         if videoSettings[AVVideoCodecKey] != nil {
             var compression = videoSettings[AVVideoCompressionPropertiesKey] as? [String: Any] ?? [:]
             compression[AVVideoAllowFrameReorderingKey] = false
             compression[AVVideoExpectedSourceFrameRateKey] = requestedFPS
-            // AVCaptureMovieFileOutput's H.264 validation accepts only 3 for
-            // this VideoToolbox key; requesting 0 or 1 raises NSException.
-            compression[kVTCompressionPropertyKey_MaxFrameDelayCount as String] = 3
             compression[kVTCompressionPropertyKey_RealTime as String] = true
             videoSettings[AVVideoCompressionPropertiesKey] = compression
             movie.setOutputSettings(videoSettings, for: video)
@@ -839,6 +838,7 @@ private final class CaptureBoundaryController: NSObject, AVCaptureFileOutputDele
     private var pending: Command?
     private var clock = RecordingSampleClock()
     private var latestPTS: Double?
+    private var latestVideoPTS: Double?
     private var trace: [String] = []
     private var cancelled = false
     init(receiver: RecordingEngine) { self.receiver = receiver }
@@ -864,18 +864,22 @@ private final class CaptureBoundaryController: NSObject, AVCaptureFileOutputDele
                     from connection: AVCaptureConnection) {
         // Audio arrives without video encoder reordering latency. Both tracks
         // still share this one output and the native pause/resume operation.
-        guard connection.inputPorts.contains(where: { $0.mediaType == .audio }) else { return }
+        let isAudio = connection.inputPorts.contains(where: { $0.mediaType == .audio })
+        let isVideo = connection.inputPorts.contains(where: { $0.mediaType == .video })
+        guard isAudio || isVideo else { return }
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
         let sampleDuration = CMSampleBufferGetDuration(sampleBuffer).seconds
         guard pts.isFinite else { return }
         lock.lock()
         guard !cancelled else { lock.unlock(); return }
+        if isVideo { latestVideoPTS = pts; lock.unlock(); return }
         latestPTS = pts
         let command = pending; pending = nil
         if let command = command {
             let name: String
             switch command { case .start: name = "start"; case .pause: name = "pause"; case .resume: name = "resume"; case .stop: name = "stop" }
-            trace.append("sample boundary \(name); pts=\(pts); clock=\(clock.duration)")
+            let lag = latestVideoPTS.map { pts - $0 }
+            trace.append("sample boundary \(name); pts=\(pts); clock=\(clock.duration); videoLag=\(String(describing: lag))")
             if trace.count > 8 { trace.removeFirst(trace.count - 8) }
         }
         switch command {

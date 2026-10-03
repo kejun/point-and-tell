@@ -249,7 +249,8 @@ final class CapturePauseProbe {
     private func finish(_ status: String, detail: String, code: Int32) {
         guard !completed else { return }; completed = true; watchdog?.cancel(); window?.orderOut(nil)
         let report: [String: Any] = ["status": status, "detail": detail, "os": ProcessInfo.processInfo.operatingSystemVersionString,
-            "events": events, "transitions": recorder.transitionDiagnostics]
+            "events": events, "transitions": recorder.transitionDiagnostics,
+            "captureError": recorder.status.lastError ?? ""]
         do { try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: directory.appendingPathComponent("results.json"), options: .atomic) }
         catch { print("CAPTURE_PAUSE_PROBE: could not save evidence: \(error.localizedDescription)") }
         print("CAPTURE_PAUSE_PROBE \(status): \(detail)")
