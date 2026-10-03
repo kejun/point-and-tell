@@ -16,6 +16,8 @@ final class CapturePauseProbe {
     private var pausedClock = 0.0
     private var finalClock = 0.0
     private var markerClock = 0.0
+    private var markerRequestClock = 0.0
+    private var displayID = CGMainDisplayID()
     private let completion: (Int32) -> Void
     init(directory: URL, completion: @escaping (Int32) -> Void) { self.directory = directory; self.completion = completion }
     func start() {
@@ -33,6 +35,7 @@ final class CapturePauseProbe {
         let deadline = DispatchWorkItem { [weak self] in self?.finish("failed", detail: "Native capture probe timed out", code: 1) }
         watchdog = deadline; DispatchQueue.main.asyncAfter(deadline: .now() + 85, execute: deadline)
         let display = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? CGMainDisplayID()
+        displayID = display
         recorder.start(displayID: display, fps: 5, outputURL: directory.appendingPathComponent("pause-resume.mov")) { [weak self] result in
             guard let self = self, self.accept(result) else { return }
             self.note("started")
@@ -58,7 +61,8 @@ final class CapturePauseProbe {
                     self.finish("failed", detail: "Paused effective clock advanced", code: 1); return
                 }
                 self.window?.backgroundColor = NSColor(deviceRed: 0.1, green: 0.2, blue: 0.8, alpha: 1)
-                self.later(0.5) { self.resume() }
+                self.window?.displayIfNeeded()
+                self.later(0.5) { self.waitForVisibleColor(.blue) { self.resume() } }
             }
         }
     }
@@ -67,9 +71,14 @@ final class CapturePauseProbe {
             guard let self = self, self.accept(result) else { return }
             self.note("resumed")
             self.later(max(0, self.pausedClock + 2 - self.recorder.elapsedSeconds)) {
-                self.markerClock = self.recorder.elapsedSeconds; self.note("marker-after-resume")
+                self.markerRequestClock = self.recorder.elapsedSeconds
+                self.note("marker-requested")
                 self.window?.backgroundColor = NSColor(deviceRed: 0.9, green: 0.4, blue: 0.1, alpha: 1)
-                self.later(0.6) { self.window?.backgroundColor = NSColor(deviceRed: 0.1, green: 0.2, blue: 0.8, alpha: 1) }
+                self.window?.displayIfNeeded()
+                self.waitForVisibleColor(.orange) {
+                    self.markerClock = self.recorder.elapsedSeconds; self.note("marker-after-resume")
+                    self.later(0.6) { self.window?.backgroundColor = NSColor(deviceRed: 0.1, green: 0.2, blue: 0.8, alpha: 1) }
+                }
             }
             self.later(max(0, self.pausedClock + 8 - self.recorder.elapsedSeconds)) {
                 self.recorder.stop { [weak self] result in
@@ -82,6 +91,33 @@ final class CapturePauseProbe {
             }
         }
     }
+    private enum ProbeColor: String { case blue, orange }
+    private func waitForVisibleColor(_ color: ProbeColor, started: TimeInterval = ProcessInfo.processInfo.systemUptime,
+                                     completion: @escaping () -> Void) {
+        guard !completed else { return }
+        // WindowServer presentation is asynchronous on virtual displays. Check
+        // actual composed pixels, not merely the NSWindow background property.
+        // This is test-only, a 2x2 read; production still creates no auto shots.
+        let bounds = CGDisplayBounds(displayID)
+        let rect = CGRect(x: bounds.midX, y: bounds.midY, width: 2, height: 2)
+        guard let snapshot = CGWindowListCreateImage(rect, .optionOnScreenOnly, kCGNullWindowID, .bestResolution) else {
+            finish("failed", detail: "Cannot verify the visible probe color", code: 1); return
+        }
+        var pixels = [UInt8](repeating: 0, count: 16)
+        let matched = pixels.withUnsafeMutableBytes { bytes -> Bool in
+            guard let context = CGContext(data: bytes.baseAddress, width: 2, height: 2, bitsPerComponent: 8,
+                bytesPerRow: 8, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
+            context.draw(snapshot, in: CGRect(x: 0, y: 0, width: 2, height: 2))
+            let p = bytes.bindMemory(to: UInt8.self)
+            return color == .blue ? p[0] < 80 && p[1] < 100 && p[2] > 130
+                : p[0] > 180 && p[1] > 50 && p[1] < 180 && p[2] < 80
+        }
+        let delay = ProcessInfo.processInfo.systemUptime - started
+        if matched { events.append(["visibleColor": color.rawValue, "waitSeconds": delay]); completion() }
+        else if delay > 5 { finish("failed", detail: "Probe color did not become visible: \(color)", code: 1) }
+        else { later(0.05) { self.waitForVisibleColor(color, started: started, completion: completion) } }
+    }
     private func inspect(_ url: URL) {
         note("finished")
         finalClock = recorder.elapsedSeconds
@@ -90,7 +126,7 @@ final class CapturePauseProbe {
                 let media = try RecordingMediaInspector.inspect(movieURL: url)
                 guard abs(media.durationSeconds - 18) < 1.2 else { throw ProbeError("Paused wall time remained in MOV duration: \(media.durationSeconds)") }
                 guard abs(self.finalClock - media.durationSeconds) < 0.5 else { throw ProbeError("Live media clock disagrees with finalized MOV: \(self.finalClock) vs \(media.durationSeconds)") }
-                guard abs(self.markerClock - self.pausedClock - 2) < 0.6 else { throw ProbeError("Post-resume screenshot clock drifted") }
+                guard abs(self.markerRequestClock - self.pausedClock - 2) < 0.6 else { throw ProbeError("Post-resume screenshot clock drifted") }
                 let asset = AVURLAsset(url: url)
                 var evidence: [String: Any] = ["duration": media.durationSeconds, "audioDecodedDuration": media.audio.durationSeconds]
                 for type in [AVMediaType.video, .audio] {
