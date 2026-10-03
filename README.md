@@ -15,7 +15,7 @@ The v0.4.0 source adds signed application updates: automatic checks, a **检查�
 ## Get the app
 
 <!-- published-release:start -->
-[Download v0.3.3 Universal](releases/v0.3.3/Point-and-Tell-v0.3.3-macOS-universal.zip?raw=true) for Intel and Apple Silicon. The application ZIP, SHA-256 checksum and exact source/build manifest are committed under [releases/v0.3.3](releases/v0.3.3).
+[Download v0.4.0 Universal](releases/v0.4.0/Point-and-Tell-v0.4.0-macOS-universal.zip?raw=true) for Intel and Apple Silicon. The signed-update installation ZIP, SHA-256 checksum and exact source/build manifest are in [releases/v0.4.0](releases/v0.4.0).
 <!-- published-release:end -->
 
 See the [release notes](releases/README.md) for verification and rollback details. Users on v0.3.3 or earlier must manually install the first update-enabled release once.
