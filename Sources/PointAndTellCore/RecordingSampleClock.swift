@@ -1,6 +1,6 @@
 import Foundation
 
-/// Presentation time from the movie output's video sample boundaries. Keeps no
+/// Presentation time from the movie output's sample boundaries. Keeps no
 /// frames and never reads a wall clock. Pause excludes only the interval between
 /// the acknowledged native pause/resume boundaries; gaps within a segment remain.
 public struct RecordingSampleClock {

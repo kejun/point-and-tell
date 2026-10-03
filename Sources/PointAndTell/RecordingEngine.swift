@@ -118,7 +118,7 @@ final class RecordingEngine: NSObject {
     /// Only injected by the offline native driver fixture; production reads AVFoundation.
     private var microphoneProbe: (() -> Bool)?
     private var transitionTrace: [String] = []
-    var transitionDiagnostics: [String] { read { transitionTrace } }
+    var transitionDiagnostics: [String] { read { transitionTrace + (boundaryController?.diagnostics ?? []) } }
     private func traceTransition(_ event: String) {
         let raw = output.map { CMTimeGetSeconds($0.recordedDuration) } ?? savedElapsed
         transitionTrace.append("\(event); phase=\(phase.rawValue); nativePaused=\(output?.isRecordingPaused ?? false); nativeDuration=\(raw)")
@@ -410,7 +410,7 @@ final class RecordingEngine: NSObject {
         // is converted to the ASR format later by the existing local AudioChunker.
         movie.setOutputSettings(nil, for: video)
         movie.setOutputSettings(nil, for: audio)
-        // Apply start/pause/resume/stop at the movie output's actual video
+        // Apply start/pause/resume/stop at the movie output's actual audio
         // sample boundary. Only scalar PTS values are observed; no samples are
         // retained, copied, re-encoded or queued by the application.
         let boundary = CaptureBoundaryController(receiver: self)
@@ -527,6 +527,7 @@ final class RecordingEngine: NSObject {
         stopMicrophoneMonitoring()
         savedElapsed = currentDuration()
         savedBytes = output?.recordedFileSize ?? savedBytes
+        transitionTrace += boundaryController?.diagnostics ?? []
         for (center, token) in observations { center.removeObserver(token) }
         observations.removeAll()
         output?.delegate = nil
@@ -654,7 +655,7 @@ final class RecordingEngine: NSObject {
         guard let movie = output else { return savedElapsed }
         // On tested macOS outputs recordedDuration includes encoded preroll
         // removed by MOV edits (over two seconds after one resume). Use the
-        // same output's frame-boundary PTS, not a wall clock or guessed offset.
+        // same output's sample-boundary PTS, not a wall clock or guessed offset.
         let seconds = boundaryController?.elapsedSeconds ?? CMTimeGetSeconds(movie.recordedDuration)
         savedElapsed = control.observeDuration(seconds)
         return savedElapsed
@@ -817,9 +818,11 @@ private final class CaptureBoundaryController: NSObject, AVCaptureFileOutputDele
     private weak var receiver: RecordingEngine?
     private var pending: Command?
     private var clock = RecordingSampleClock()
+    private var trace: [String] = []
     private var cancelled = false
     init(receiver: RecordingEngine) { self.receiver = receiver }
     var elapsedSeconds: Double { lock.lock(); defer { lock.unlock() }; return clock.duration }
+    var diagnostics: [String] { lock.lock(); defer { lock.unlock() }; return trace }
     func request(_ command: Command) {
         lock.lock(); defer { lock.unlock() }
         if !cancelled { pending = command }
@@ -828,13 +831,21 @@ private final class CaptureBoundaryController: NSObject, AVCaptureFileOutputDele
     func fileOutputShouldProvideSampleAccurateRecordingStart(_ output: AVCaptureFileOutput) -> Bool { true }
     func fileOutput(_ output: AVCaptureFileOutput, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
                     from connection: AVCaptureConnection) {
-        guard connection.inputPorts.contains(where: { $0.mediaType == .video }) else { return }
+        // Audio arrives without video encoder reordering latency. Both tracks
+        // still share this one output and the native pause/resume operation.
+        guard connection.inputPorts.contains(where: { $0.mediaType == .audio }) else { return }
         let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
         let sampleDuration = CMSampleBufferGetDuration(sampleBuffer).seconds
         guard pts.isFinite else { return }
         lock.lock()
         guard !cancelled else { lock.unlock(); return }
         let command = pending; pending = nil
+        if let command = command {
+            let name: String
+            switch command { case .start: name = "start"; case .pause: name = "pause"; case .resume: name = "resume"; case .stop: name = "stop" }
+            trace.append("sample boundary \(name); pts=\(pts); clock=\(clock.duration)")
+            if trace.count > 8 { trace.removeFirst(trace.count - 8) }
+        }
         switch command {
         case .start?, .resume?: clock.beginSegment(at: pts)
         case .pause?, .stop?: clock.endSegment(at: pts)

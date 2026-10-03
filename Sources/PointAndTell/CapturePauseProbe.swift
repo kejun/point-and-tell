@@ -36,7 +36,9 @@ final class CapturePauseProbe {
         recorder.start(displayID: display, fps: 5, outputURL: directory.appendingPathComponent("pause-resume.mov")) { [weak self] result in
             guard let self = self, self.accept(result) else { return }
             self.note("started")
-            self.later(10) { self.pause() }
+            // Start acknowledgement can lag the first written sample. Target
+            // ten media seconds, not ten extra wall seconds after that callback.
+            self.later(max(0, 10 - self.recorder.elapsedSeconds)) { self.pause() }
         }
     }
     private func later(_ seconds: Double, _ action: @escaping () -> Void) {
@@ -64,12 +66,12 @@ final class CapturePauseProbe {
         recorder.resume { [weak self] result in
             guard let self = self, self.accept(result) else { return }
             self.note("resumed")
-            self.later(2) {
+            self.later(max(0, self.pausedClock + 2 - self.recorder.elapsedSeconds)) {
                 self.markerClock = self.recorder.elapsedSeconds; self.note("marker-after-resume")
                 self.window?.backgroundColor = NSColor(deviceRed: 0.9, green: 0.4, blue: 0.1, alpha: 1)
                 self.later(0.6) { self.window?.backgroundColor = NSColor(deviceRed: 0.1, green: 0.2, blue: 0.8, alpha: 1) }
             }
-            self.later(8) {
+            self.later(max(0, self.pausedClock + 8 - self.recorder.elapsedSeconds)) {
                 self.recorder.stop { [weak self] result in
                     guard let self = self else { return }
                     switch result {

@@ -8,7 +8,7 @@
 
 - 在同一 AVCaptureSession、屏幕输入、原麦克风及 AVCaptureMovieFileOutput 上使用原生 pauseRecording/resumeRecording，始终写入同一 MOV。没有分段文件、全片合成或第二次编码。
 - pausing/resuming 由对应 delegate 确认，每次只保留一个请求。8 秒未确认会中断并保留文件；Stop 取消待处理转换，沿用 20 秒封口 watchdog。输出身份、文件 URL、录制世代和预期状态拦截旧回调。
-- recordedDuration 是媒体时钟：确认暂停后冻结，继续后读取实际输出，不使用墙钟，也不重复扣除暂停时长。延迟截图包含录制 ID、事件 ID 和切换世代，快速暂停再继续也不能补拍旧请求。
+- 媒体时钟取自同一文件输出的音频样本 PTS；start/pause/resume/stop 在该输出的采样边界执行。只保留当前有效区间起点和累计时长，暂停确认后冻结，不使用墙钟，不缓存帧、不重写样本、不再次扣除暂停时间。延迟截图包含录制 ID、事件 ID 和切换世代，快速暂停再继续也不能补拍旧请求。
 - 截图、画笔区间、WAV 和 ASR 保持录制坐标。AudioChunker 保留真实音轨起点和缺口；供应商毫秒除以 1000 后只加一次分片起点，不人为删静音来掩盖暂停空档。
 - 有意暂停时不累计麦克风 inactive/静音计时；继续时重置并检查原连接。设备断开、会话错误、系统睡眠仍中断，不静默切换麦克风。
 - 稳定 paused/recording 及有效时长原子保存。失败显示“项目未保存”，不回滚已生效的媒体状态；下次暂停、继续或结束重试保存。崩溃遗留 paused 项目打开后转为 interrupted，不追加旧 MOV、不自动上传。
@@ -27,8 +27,14 @@ UI fixture 检查各状态工具条和更新保护；鼠标事件检查冻结笔
 "/Applications/Point & Tell.app/Contents/MacOS/PointAndTell" --capture-pause-probe "$HOME/Desktop/PointTell-pause-test-$(date +%s)"
 ```
 
-运行约 50 秒：录制 10 秒，暂停 30 秒，再录 8 秒。检查 MOV 约 18 秒、暂停计时冻结、视频不含暂停时的紫色画面、音视频 PTS 不含暂停长度缺口，以及生产 AudioChunker 输出单段约 18 秒 WAV。记录恢复后第 2 秒的媒体时间。results.json、MOV 和 WAV 留在该目录；失败不删除源文件。
+运行约一分钟：录制 10 秒，暂停 30 秒，再录 8 秒。检查 MOV 约 18 秒、暂停计时冻结、视频不含暂停时的紫色画面、音视频 PTS 不含暂停长度缺口，以及生产 AudioChunker 输出单段约 18 秒 WAV。恢复后第 2 秒显示短暂橙色标记，核对该画面的实际成片 PTS 与截图时钟，误差必须小于 0.5 秒；实时最终读数与成片时长也必须小于 0.5 秒。随后进行第二次短录制，从已暂停状态直接结束，确认文件可解码且时间一致。results.json、MOV 和 WAV 留在该目录；失败不删除源文件。
+
+### 实录发现及路线调整
+
+macOS 15.7.9 CI 的真实屏幕/虚拟麦克风输出暴露了两个行为：暂停/恢复 delegate 到达时 `isRecordingPaused` 尚未切换；原始 `recordedDuration` 包含最终 MOV edit list 不呈现的区间，一次暂停后可比成片快约 2 秒。单纯关闭 B 帧没有消除偏差，因此保留系统协商编码设置，采用 macOS 10.8 已支持的 `AVCaptureFileOutputDelegate` 在同一输出的采样边界控制与计时。未引入 AVAssetWriter 或分段合成，也没有用固定偏移或删音频静音掩盖差异。与 issue 最初“直接读取 recordedDuration”的建议不同，这一调整基于保存的实录 MOV 和时间映射；原始读数仅保留在诊断日志中。
+
+开启 sample-accurate control 会让系统在采集会话启动时准备编码器；暂停仍保持会话运行。控制以音频采样边界为准，避免视频编码重排延迟进入计时；回调只读取时间和执行一个待处理命令，不持有帧或音频数据；目标机器上的 CPU/能耗仍需实测。
 
 仍须分别记录 Intel macOS 11.7.11 / 8 GB 和 Apple Silicon 的真实结果，人工检查拍手/画面提示同步、暂停中讲话未录入、跨暂停 seek、5/10 fps、断设备/睡眠、长录制多次暂停、CPU/内存与封口延迟。自动 probe 不提供语义音画同步证据，CI 成功不代表 Big Sur 或长期性能已验收。若原生实录 MOV/PTS 不满足要求，保留媒体证据分析后再评估分段合成，不用冻结 UI 或随意删静音掩盖。
 
-参考：Apple [pauseRecording](https://developer.apple.com/documentation/avfoundation/avcapturefileoutput/pauserecording())、[resumeRecording](https://developer.apple.com/documentation/avfoundation/avcapturefileoutput/resumerecording())、[录制 delegate](https://developer.apple.com/documentation/avfoundation/avcapturefileoutputrecordingdelegate)。
+参考：Apple [pauseRecording](https://developer.apple.com/documentation/avfoundation/avcapturefileoutput/pauserecording())、[resumeRecording](https://developer.apple.com/documentation/avfoundation/avcapturefileoutput/resumerecording())、[录制 delegate](https://developer.apple.com/documentation/avfoundation/avcapturefileoutputrecordingdelegate)、[文件输出样本边界 delegate](https://developer.apple.com/documentation/avfoundation/avcapturefileoutputdelegate)。
