@@ -1,6 +1,6 @@
 # Point & Tell：核心逻辑契约
 
-Point & Tell 是 macOS 原生录屏讲解工具：屏幕与麦克风写入本地 MOV，用户主动标记/保存画笔截图形成独立卡片，再用真实 ASR 时间关联讲解，经人工校对后离线导出。
+Point & Tell 是 macOS 原生录屏讲解工具：屏幕与麦克风写入本地 MOV，用户主动标记/保存画笔截图形成独立卡片，再把完整转写按截图数量连续分段，真实时间辅助选择分界，经人工整理后离线导出。
 
 本文件适用于全仓库；修改子目录前检查更近的 `AGENTS.md` / `AGENTS.override.md`，局部冲突以更近的指令为准。当前行为以待修改提交的实际代码为准，文档可能滞后；未合入 PR 和已分发包不是当前源码的替代品。下面是改动的验收约束，不是“现有实现没有缺陷”的保证。用户明确要求改变核心行为时，可以调整契约，但须在同一改动中说明语义变化、旧数据处理与回归测试，不要把类名、算法常数或当前缺陷永久冻结。
 
@@ -10,7 +10,7 @@ Point & Tell 是 macOS 原生录屏讲解工具：屏幕与麦克风写入本地
 
 1. **截图事件拥有卡片，ASR 不拥有卡片。** 录制中的 bookmark / 保存后的 pen 事件先保存图片和独立卡片，无语音、无匹配或同一时刻的不同截图仍可独立存在。卡片身份来自截图事件，不随 ASR 句子 ID、断句或重试变化；同一事件不能重复成卡，同时间按原事件顺序稳定排列。不得在转写完成、打开项目或导出时隐式抽帧、按句子新造截图卡，或把多张截图卡合并成一张。手动卡片、手动提取和旧式自动图片须保留各自来源，不能冒充录制截图。
 
-2. **所有关联都回到同一条真实媒体时间轴。** 截图时刻取录制输出的媒体时间；冻结截图时刻与画笔编辑持续区间分开保存。WAV 分片起点保留原 MOV 的 PTS 偏移，ASR 的片内时间只加一次该偏移；不能用墙钟、文件时长等分或文字长度猜时间。词时间完整且能无损对应原文才按词拆分；否则保留句级/无时间精度。有效最终正文缺时间仍可保存为已完成源转写，缺词时间不自动重传；空结果或检测到的未完成流不能当作成功。截图前、期间、之后的讲解均可成为候选；歧义显示需校对，不复制同一语音单位给多个自动卡片。删除卡片不删除原截图的时间分界，避免邻卡重新吞掉已删除讲解。
+2. **所有关联都回到同一条真实媒体时间轴。** 截图时刻取录制输出的媒体时间；冻结截图时刻与画笔编辑持续区间分开保存。WAV 分片起点保留原 MOV 的 PTS 偏移，ASR 的片内时间只加一次该偏移；不能用墙钟、文件时长等分或文字长度猜时间。词时间完整且能无损对应原文才按词拆分；否则保留句级/无时间精度。有效最终正文缺时间仍可保存为已完成源转写，缺词时间不自动重传；空结果或检测到的未完成流不能当作成功。自动初稿按录制截图数量连续分段，已取得的完整原文按顺序恰好分配一次；截图前、期间、之后及无时间戳的文字均须保留，不能因距离或歧义拒绝归属。真实时间、停顿和文字结构只辅助选择分界，不设置置信度拒绝门槛。仅有句时间时允许文字分段，各片段仍引用原句覆盖范围，不能插值生成词时间；原文确实不足时可保留空卡，不复制或编造文字。相邻首句/末句移动保持顺序并一起保存。删除卡片不删除原截图的时间分界，避免邻卡重新吞掉已删除讲解。
 
 3. **源数据、人工结果和生成建议分层保留。** MOV、截图和已写出的音频是可恢复的用户资料；重试/导出/删卡不得改写或清理这些原件。自动重算仅更新仍未被编辑的生成内容；用户文字、时间、配图、顺序、删除抑制记录和旧项目已存布局优先。迁移须可重复且不丢数据；缺少新字段可兼容，不能因 chunks 为空就清空合法的旧版顶层 transcripts。改变模型/迁移时一起覆盖旧项目 → 打开 → 编辑/删除 → 重试 → 保存重开 → 导出。
 
@@ -28,7 +28,7 @@ Point & Tell 是 macOS 原生录屏讲解工具：屏幕与麦克风写入本地
 | --- | --- |
 | 录制、HUD、画笔、时钟、抽音 | 重复开始/停止、切换应用、设备中断、截图 → MOV/WAV → ASR 偏移；`CaptureDiagnosticsTests`、`CaptureFailureTests`、`ASRWAVAudioTests`、`WorkflowReadinessTests`，macOS audio/UI smoke，相关设备检查 |
 | ASR 请求、解析、取消、重试 | JSON/SSE → 分片保存 → 卡片保留；`ASRClientTests`、`ASRTransportTests`、`ASRResponseParserTests`、`ASRErrorTests`、`ASRProjectUpdatesTests`，时间解析变更加测 `ScreenshotCardsTests`、`TranscriptAlignmentTests`；无请求取消/第二片保存失败后重开 |
-| 截图卡、匹配、模型、持久化、编辑器 | 同时刻/无匹配、词/句/无时间、人工编辑/删卡后重试、旧项目重复打开；`ScreenshotCardsTests`、`ReviewCardGroupingTests`、`ReviewCardDeletionTests`、`ProjectTests`、`TranscriptAlignmentTests`、`FrameMatcherTests`，UI smoke 与导出对照 |
+| 截图卡、匹配、模型、持久化、编辑器 | 同时刻/远距离/无时间的完整分配、精确原文覆盖、相邻移动、人工编辑/删卡后重试、旧项目重复打开；`TranscriptPartitionTests`、`ScreenshotCardsTests`、`ReviewCardGroupingTests`、`ReviewCardDeletionTests`、`ProjectTests`、`TranscriptAlignmentTests`、`FrameMatcherTests`，UI smoke 与导出对照 |
 | 导出 | 编辑器 → HTML/Markdown/JSON、无图/坏图/危险文本及关联元数据属性/大小限制、失败不伤源项目；`ExporterTests`、`TranscriptAlignmentTests`，UI fixture → WebKit 验证 |
 | 设置、更新、打包、依赖 | 许可撤回/重复自动触发、忙碌/未保存时安装门禁；`WorkflowReadinessTests`、`UpdateSafetyTests`，release metadata、Universal 构建与隔离更新测试 |
 

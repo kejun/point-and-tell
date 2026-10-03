@@ -29,6 +29,12 @@ UI fixture 检查各状态工具条和更新保护；鼠标事件检查冻结笔
 
 运行约一分钟：录制 10 秒，暂停 30 秒，再录 8 秒。检查 MOV 约 18 秒、暂停计时冻结、视频不含暂停时的紫色画面、音视频 PTS 不含暂停长度缺口，以及生产 AudioChunker 输出单段约 18 秒 WAV。恢复后第 2 秒显示短暂橙色标记，核对该画面的实际成片 PTS 与截图时钟，误差必须小于 0.5 秒；实时最终读数与成片时长也必须小于 0.5 秒。随后进行第二次短录制，从已暂停状态直接结束，确认文件可解码且时间一致。results.json、MOV 和 WAV 留在该目录；失败不删除源文件。
 
+### 2026-10-03 Intel 真机反馈
+
+PR #14 与 #16 已合入 main，源码 0.5.1 / build 13。北京时间 15:04，用户在收到 0.5.1 Universal 测试包后反馈 Intel 真机实际测试完全没有问题，记录为用户设备使用通过。
+
+这项反馈与自动化结果分别保留：[CI 37104362726](https://github.com/kejun/point-and-tell/actions/runs/37104362726) 的 arm64 任务全部通过，Intel 的 182 项核心测试、Universal 构建、更新安全、AAC 和 UI 通过，但暂停探针仍报告暂停画面写入 MOV。用户选择暂缓该 CI 差异调查；探针未跳过或降低标准，继续在 [#12](https://github.com/kejun/point-and-tell/issues/12) 跟踪。此次反馈没有附带具体系统配置或逐项 probe/性能日志，下面的细分检查不因此自动全部勾选。
+
 ### 实录发现及路线调整
 
 macOS 15.7.9 CI 的真实屏幕/虚拟麦克风输出暴露了两个行为：暂停/恢复 delegate 到达时 `isRecordingPaused` 尚未切换；原始 `recordedDuration` 包含最终 MOV edit list 不呈现的区间，一次暂停后可比成片快约 2 秒。单纯关闭 B 帧没有消除偏差，因此保留系统协商编码设置，采用 macOS 10.8 已支持的 `AVCaptureFileOutputDelegate` 在同一输出的采样边界控制与计时。未引入 AVAssetWriter 或分段合成，也没有用固定偏移或删音频静音掩盖差异。与 issue 最初“直接读取 recordedDuration”的建议不同，这一调整基于保存的实录 MOV 和时间映射；原始读数仅保留在诊断日志中。
