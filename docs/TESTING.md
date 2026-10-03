@@ -70,3 +70,13 @@ Report separately: authored tests, tests executed/passed, macOS compiler result,
 ## Screenshot-first cards (#10)
 
 Follow [SCREENSHOT-CARDS.md](SCREENSHOT-CARDS.md) for the source/clock trace and device limits. The screenshot core suite and SCREENSHOT_CARD_UI_OK native fixture cover card creation before ASR, real timestamp granularity, stable IDs, deletion/edit persistence, no automatic frame extraction, and atomic manual extraction/save failure. Device speech/screenshot alignment remains a separate check.
+
+
+## Complete transcript partition (v0.5.1)
+
+- Three screenshots plus three sentence-only ranges that cross screenshot midpoints must produce three nonempty editable cards. Same-time images, overlapping pen sessions, missing times and speech farther than 12 seconds must retain all text.
+- Verify exact source span coverage, including punctuation, whitespace and composed Unicode: every source character appears once in original order. No synthetic word timestamps; sentence-only excerpts retain their original enclosing interval.
+- Reopen a v0.5.0 project with untouched ambiguous cards: regenerate locally from saved transcription without uploading audio. Edited cards and deliberate deletions remain unchanged.
+- Use the first/last sentence movement buttons under the text field. Both cards save together; busy state, empty source, first/last boundaries and failed writes must leave unavailable operations disabled or unchanged. Reopen and export the edited result.
+- The native smoke fixture prints TRANSCRIPT_PARTITION_UI_OK after checking complete drafts, adjacent moves, busy controls and failed-save protection. It uses local fixtures without ASR calls.
+- The separate Intel capture-pause probe is unchanged; its existing failure does not become a passing segmentation test or a verified capture path.

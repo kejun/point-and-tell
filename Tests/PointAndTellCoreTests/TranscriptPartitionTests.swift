@@ -132,7 +132,8 @@ final class TranscriptPartitionTests: XCTestCase {
 
     func testBoundaryMovesPreserveTextImagesAndManualTimingAcrossSaveAndReopen() throws {
         let source = TranscriptSegment(text: "甲。乙。丙。", startSeconds: 1, endSeconds: 9)
-        var project = ProjectManifest(title: "Moves", anchors: pictures([2, 5, 8]), transcripts: [source], screenshotCardVersion: 1)
+        var project = ProjectManifest(title: "Moves", createdAt: Date(timeIntervalSince1970: 1_700_000_000),
+            anchors: pictures([2, 5, 8]), transcripts: [source], screenshotCardVersion: 1)
         project.reconcileScreenshotCards()
         let original = project.reviewCards
         XCTAssertFalse(project.moveBoundaryPassage(cardID: original[0].id, toPrevious: true))
