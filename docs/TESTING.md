@@ -63,3 +63,8 @@ Report separately: authored tests, tests executed/passed, macOS compiler result,
 - Reopen an unedited v0.3.0 project: regroup from stored word times with no API request. Repeat the open, edit one split card, then reopen/export: no duplicate cards, lost whitespace or overwritten edits.
 - From another foreground application, click Pen once and draw immediately. Verify visible strokes, Undo, Clear, Enter/Save, Escape/Cancel and Stop during annotation. The recording HUD must stay above both pen windows and remain clickable.
 - Disconnect the chosen display while recording: requesting Pen must explain the missing display and must not silently create a normal bookmark.
+
+
+## Screenshot-first cards (#10)
+
+Follow [SCREENSHOT-CARDS.md](SCREENSHOT-CARDS.md) for the source/clock trace and device limits. The screenshot core suite and SCREENSHOT_CARD_UI_OK native fixture cover card creation before ASR, real timestamp granularity, stable IDs, deletion/edit persistence, no automatic frame extraction, and atomic manual extraction/save failure. Device speech/screenshot alignment remains a separate check.

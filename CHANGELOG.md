@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.1 — 2026-10-03
+
+- Create one durable card for each completed recording bookmark or pen session, before transcription. Keep screenshot event IDs stable across duplicate callbacks, retries and reopen; equal-time events stay separate.
+- Associate real word/sentence timestamps back to screenshots using pen intervals, adjacent screenshot boundaries and speech pauses. Keep ambiguous/untimed source text available for manual review, without splitting sentences into invented word times.
+- Remove post-transcription automatic frame extraction. Keep explicit manual extraction as an atomic replacement on the selected card; failed writes leave existing cards untouched.
+- Preserve generated-versus-edited content and screenshot deletion decisions. Legacy adoption keeps stored cards intact; screenshot cards export in exactly the editor's order and grouping.
+- Add association details and a source-transcript viewer, including a File menu entry when no cards exist. Save timing when editing ends; block navigation after an unsuccessful text write until saving succeeds.
+- Retain pen strokes when saving fails, allowing retry or explicit cancellation.
+
+Native automated fixtures do not establish real Qwen response accuracy or timing precision on physical Big Sur recording hardware. See [screenshot card behavior and device checks](docs/SCREENSHOT-CARDS.md).
+
 ## 0.4.0 — 2026-10-03
 
 - Add Sparkle 2.9.6, preserving macOS 11 and Universal support. Official builds check a signed HTTPS feed every 24 hours, expose Check for Updates and Automatic Checks, and require confirmation before installation.

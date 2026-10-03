@@ -127,9 +127,9 @@ final class DrawingOverlay: NSObject {
     private let window: DrawingInputPanel
     private let controls: NSPanel
     private let canvas: DrawingCanvas
-    private let completion: (Result<CGImage?, Error>) -> Void
+    private let completion: (Result<CGImage?, Error>) throws -> Void
     private var finished = false
-    init(image: CGImage, screen: NSScreen, completion: @escaping (Result<CGImage?, Error>) -> Void) {
+    init(image: CGImage, screen: NSScreen, completion: @escaping (Result<CGImage?, Error>) throws -> Void) {
         self.completion = completion
         canvas = DrawingCanvas(image: image, frame: NSRect(origin: .zero, size: screen.frame.size))
         window = DrawingInputPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
@@ -165,9 +165,20 @@ final class DrawingOverlay: NSObject {
     }
     @objc private func undo() { canvas.undoStroke() }
     @objc private func clear() { canvas.clearStrokes() }
-    @objc func done() { do { finish(.success(try canvas.bakedImage())) } catch { finish(.failure(error)) } }
-    @objc func cancel() { finish(.success(nil)) }
-    private func finish(_ result: Result<CGImage?, Error>) { guard !finished else { return }; finished = true; controls.close(); window.close(); completion(result) }
+    @discardableResult @objc func done() -> Bool {
+        do { return finish(.success(try canvas.bakedImage())) } catch { return finish(.failure(error)) }
+    }
+    @objc func cancel() { _ = finish(.success(nil)) }
+    private func finish(_ result: Result<CGImage?, Error>) -> Bool {
+        guard !finished else { return true }
+        do { try completion(result) }
+        catch {
+            let alert = NSAlert(); alert.messageText = "标注保存失败"
+            alert.informativeText = error.localizedDescription + "\n笔迹仍保留，请修复后重新保存，或明确取消标注。"
+            alert.runModal(); return false
+        }
+        finished = true; controls.close(); window.close(); return true
+    }
 }
 
 extension DrawingOverlay {
