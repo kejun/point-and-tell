@@ -2,6 +2,7 @@
 import AppKit
 import AVFoundation
 import CoreGraphics
+import VideoToolbox
 import PointAndTellCore
 
 /// macOS 11-compatible screen + microphone recording. No frame arrays or unbounded
@@ -13,7 +14,7 @@ final class RecordingEngine: NSObject {
         case screenPermission, microphonePermission, microphoneUnavailable
         case selectedMicrophoneUnavailable, microphoneConnection(String)
         case displayUnavailable, cannotConfigure(String), notEnoughDiskSpace
-        case startTimedOut, finishTimedOut, interrupted(String)
+        case startTimedOut, finishTimedOut, transitionTimedOut, interrupted(String)
 
         var errorDescription: String? {
             switch self {
@@ -32,6 +33,7 @@ final class RecordingEngine: NSObject {
             case .notEnoughDiskSpace: return "The recording volume needs at least 256 MB free. Existing recordings have been preserved."
             case .startTimedOut: return "The screen recorder did not start. Check Screen Recording and Microphone permissions, then reopen the app."
             case .finishTimedOut: return "The recorder did not finish closing its movie. Its partial file has been preserved; do not overwrite it."
+            case .transitionTimedOut: return "暂停或恢复未在 8 秒内得到系统确认，已结束本次录制并保留文件。请检查设备和权限后重试。"
             case .interrupted(let reason): return "Recording stopped: \(reason). The existing movie has been preserved."
             }
         }
@@ -86,13 +88,15 @@ final class RecordingEngine: NSObject {
     var onFailure: ((Error) -> Void)?
     var onRecordingFinished: ((Result<URL, Error>) -> Void)?
 
-    private enum Phase: String { case idle, permissions, starting, recording, stopping }
+    private typealias Phase = RecordingControl.Phase
     private let queue = DispatchQueue(label: "PointAndTell.RecordingEngine", qos: .userInitiated)
     private let queueKey = DispatchSpecificKey<UInt8>()
-    private var phase: Phase = .idle
+    private var control = RecordingControl()
+    private var phase: Phase { control.phase }
     private var session: AVCaptureSession?
     private var output: AVCaptureMovieFileOutput?
-    private var operationID = UUID()
+    private var boundaryController: CaptureBoundaryController?
+    private var operationID: UUID { control.operationID }
     private var startCompletion: ((Result<Void, Error>) -> Void)?
     private var stopCompletions: [(Result<URL, Error>) -> Void] = []
     private var lastResult: Result<URL, Error>?
@@ -109,6 +113,18 @@ final class RecordingEngine: NSObject {
     private var observations: [(NotificationCenter, NSObjectProtocol)] = []
     private var startWatchdog: DispatchWorkItem?
     private var finishWatchdog: DispatchWorkItem?
+    private var transitionWatchdog: DispatchWorkItem?
+    private var transitionCompletion: ((Result<Void, Error>) -> Void)?
+    private var transitionTimeout: TimeInterval = 8
+    /// Only injected by the offline native driver fixture; production reads AVFoundation.
+    private var microphoneProbe: (() -> Bool)?
+    private var transitionTrace: [String] = []
+    var transitionDiagnostics: [String] { read { transitionTrace + (boundaryController?.diagnostics ?? []) } }
+    private func traceTransition(_ event: String) {
+        let raw = output.map { CMTimeGetSeconds($0.recordedDuration) } ?? savedElapsed
+        transitionTrace.append("\(event); phase=\(phase.rawValue); nativePaused=\(output?.isRecordingPaused ?? false); nativeDuration=\(raw)")
+        if transitionTrace.count > 16 { transitionTrace.removeFirst(transitionTrace.count - 16) }
+    }
     private var requestedMicrophoneID: String?
     private var microphoneID: String?
     private var microphoneName: String?
@@ -130,15 +146,22 @@ final class RecordingEngine: NSObject {
     deinit {
         startWatchdog?.cancel()
         finishWatchdog?.cancel()
+        transitionWatchdog?.cancel()
         microphoneTimer?.cancel()
         for (center, token) in observations { center.removeObserver(token) }
         // A normal app termination should wait for stop's completion instead.
-        if output?.isRecording == true { output?.stopRecording() }
+        if movieDidStart || output?.isRecording == true || output?.isRecordingPaused == true { output?.stopRecording() }
         session?.stopRunning()
     }
 
     var isRecording: Bool { read { phase == .recording } }
     var isBusy: Bool { read { phase != .idle } }
+    var capturePhase: RecordingControl.Phase { read { phase } }
+    var canStop: Bool { read { phase.canStop } }
+    var screenshotToken: (operationID: UUID, epoch: UUID) { read { (operationID, control.screenshotEpoch) } }
+    func allowsScreenshot(_ token: (operationID: UUID, epoch: UUID)) -> Bool {
+        read { control.allowsScreenshot(operationID: token.operationID, epoch: token.epoch) }
+    }
     var lastOutputURL: URL? { read { destination } }
 
     /// Movie-relative time, from the SAME AVFoundation output as screen and mic.
@@ -176,9 +199,9 @@ final class RecordingEngine: NSObject {
             guard !FileManager.default.fileExists(atPath: outputURL.path) else {
                 self.deliver { completion(.failure(EngineError.destinationExists)) }; return
             }
-            self.operationID = UUID()
+            self.control.begin()
+            self.transitionTrace.removeAll()
             let id = self.operationID
-            self.phase = .permissions
             self.failureStage = .permissions
             self.startCompletion = completion
             self.destination = outputURL
@@ -233,12 +256,70 @@ final class RecordingEngine: NSObject {
             }
             self.stopCompletions.append(completion)
             if self.phase == .permissions {
-                self.operationID = UUID()
                 self.failBeforeStart(EngineError.cancelled)
             } else if self.phase != .stopping {
                 self.beginStopping()
             }
         }
+    }
+
+    func pause(completion: @escaping (Result<Void, Error>) -> Void) { transition(.pause, completion: completion) }
+    func resume(completion: @escaping (Result<Void, Error>) -> Void) { transition(.resume, completion: completion) }
+
+    private func transition(_ kind: RecordingControl.Kind, completion: @escaping (Result<Void, Error>) -> Void) {
+        queue.async {
+            switch self.control.request(kind) {
+            case .unchanged: self.deliver { completion(.success(())) }
+            case .rejected: self.deliver { completion(.failure(EngineError.busy)) }
+            case .started(let ticket):
+                self.traceTransition(kind == .pause ? "request pause" : "request resume")
+                self.failureStage = kind == .pause ? .pausing : .resuming
+                self.transitionCompletion = completion
+                self.audioInactiveSince = nil; self.quietSince = nil
+                self.microphoneAveragePowerDBFS = nil; self.microphonePeakPowerDBFS = nil
+                self.microphoneHealth = kind == .pause ? "pausing" : "resuming"
+                let watchdog = DispatchWorkItem { [weak self] in
+                    guard let self = self, self.control.pending == ticket else { return }
+                    self.traceTransition("transition timeout")
+                    self.pendingFailure = CaptureFailure(stage: self.failureStage, underlying: EngineError.transitionTimedOut)
+                    self.beginStopping()
+                }
+                self.transitionWatchdog = watchdog
+                self.queue.asyncAfter(deadline: .now() + self.transitionTimeout, execute: watchdog)
+                if let boundary = self.boundaryController { boundary.request(kind == .pause ? .pause : .resume) }
+                else if kind == .pause { self.output?.pauseRecording() }
+                else { self.output?.resumeRecording() }
+            }
+        }
+    }
+
+    private func acknowledgeTransition(_ kind: RecordingControl.Kind, output: AVCaptureFileOutput, fileURL: URL) {
+        queue.async {
+            self.traceTransition("delegate \(kind); sameOutput=\(self.output === output); sameURL=\(self.destination == fileURL)")
+            guard self.output === output, self.destination == fileURL,
+                  let ticket = self.control.pending, ticket.operationID == self.operationID,
+                  ticket.kind == kind else { return }
+            // Read the native boundary clock before freezing. The output delegate
+            // excludes the paused PTS interval once; never subtract it here again.
+            if kind == .pause { self.savedElapsed = self.currentDuration() }
+            guard self.control.acknowledge(ticket) else { return }
+            self.transitionWatchdog?.cancel(); self.transitionWatchdog = nil
+            self.audioInactiveSince = nil; self.quietSince = nil
+            self.microphoneHealth = kind == .pause ? "paused" : "checking"
+            let completion = self.transitionCompletion; self.transitionCompletion = nil
+            if kind == .resume { self.refreshMicrophoneStatus(); self.checkMicrophoneReadiness() }
+            if self.pendingFailure == nil { self.failureStage = .recording }
+            if let completion = completion {
+                let result: Result<Void, Error> = self.pendingFailure.map { .failure($0) } ?? .success(())
+                self.deliver { completion(result) }
+            }
+        }
+    }
+
+    private func cancelTransition(_ error: Error) {
+        transitionWatchdog?.cancel(); transitionWatchdog = nil
+        let completion = transitionCompletion; transitionCompletion = nil
+        if let completion = completion { deliver { completion(.failure(error)) } }
     }
 
     private func permissionResult(_ result: Result<Void, Error>, id: UUID, displayID: CGDirectDisplayID) {
@@ -330,10 +411,33 @@ final class RecordingEngine: NSObject {
         // is converted to the ASR format later by the existing local AudioChunker.
         movie.setOutputSettings(nil, for: video)
         movie.setOutputSettings(nil, for: audio)
+        // The native encoder may buffer frames even with B frames disabled.
+        // At 5 fps this presented paused-screen frames for 1.6 seconds on Intel.
+        // Request timely encoding as well as disabling reordering, retaining
+        // the negotiated codec/size/bitrate and hardware selection. Do not set
+        // MaxFrameDelayCount: AVCaptureMovieFileOutput rejects tight bounds and
+        // its accepted value prevented sample delivery on the tested encoder.
+        var videoSettings = movie.outputSettings(for: video)
+        if videoSettings[AVVideoCodecKey] != nil {
+            var compression = videoSettings[AVVideoCompressionPropertiesKey] as? [String: Any] ?? [:]
+            compression[AVVideoAllowFrameReorderingKey] = false
+            compression[AVVideoExpectedSourceFrameRateKey] = requestedFPS
+            compression[kVTCompressionPropertyKey_RealTime as String] = true
+            videoSettings[AVVideoCompressionPropertiesKey] = compression
+            movie.setOutputSettings(videoSettings, for: video)
+            let applied = movie.outputSettings(for: video)[AVVideoCompressionPropertiesKey] as? [String: Any] ?? [:]
+            traceTransition("encoder compression: \(applied)")
+        }
+        // Apply start/pause/resume/stop at the movie output's actual audio
+        // sample boundary. Only scalar PTS values are observed; no samples are
+        // retained, copied, re-encoded or queued by the application.
+        let boundary = CaptureBoundaryController(receiver: self)
+        movie.delegate = boundary
+        boundaryController = boundary
         captureSession.commitConfiguration()
         session = captureSession
         output = movie
-        phase = .starting
+        control.configured()
         let runtimeErrors = CaptureSessionErrorLatch()
         observe(captureSession, operationID: id, runtimeErrors: runtimeErrors)
         failureStage = .sessionStart
@@ -352,7 +456,7 @@ final class RecordingEngine: NSObject {
         // success before the connection is both enabled and active.
         startMicrophoneMonitoring(operationID: id)
         failureStage = .movieStart
-        movie.startRecording(to: url, recordingDelegate: self)
+        boundary.request(.start(url))
         let watchdog = DispatchWorkItem { [weak self] in
             guard let self = self, self.operationID == id, self.phase == .starting else { return }
             self.pendingFailure = CaptureFailure(stage: .movieStart, underlying: EngineError.startTimedOut)
@@ -407,12 +511,14 @@ final class RecordingEngine: NSObject {
     }
 
     private func beginStopping() {
-        if phase == .recording { failureStage = .finalization }
-        phase = .stopping
+        savedElapsed = currentDuration()
+        guard control.stop() else { return }
+        if pendingFailure == nil { failureStage = .finalization }
+        cancelTransition(pendingFailure ?? EngineError.cancelled)
         startWatchdog?.cancel()
         stopMicrophoneMonitoring()
-        savedElapsed = currentDuration()
-        if output?.isRecording == true { output?.stopRecording() }
+        if let boundary = boundaryController { boundary.request(.stop) }
+        else if movieDidStart || output?.isRecording == true || output?.isRecordingPaused == true { output?.stopRecording() }
         // Do NOT stop the session until didFinishRecording: stopping it early can
         // prevent movie finalization. A bounded watchdog handles a stuck driver.
         let id = operationID
@@ -435,15 +541,20 @@ final class RecordingEngine: NSObject {
         let result = result.mapError { CaptureFailure(stage: failureStage, underlying: $0) as Error }
         startWatchdog?.cancel()
         finishWatchdog?.cancel()
+        cancelTransition(failure ?? EngineError.cancelled)
         stopMicrophoneMonitoring()
         savedElapsed = currentDuration()
         savedBytes = output?.recordedFileSize ?? savedBytes
+        transitionTrace += boundaryController?.diagnostics ?? []
         for (center, token) in observations { center.removeObserver(token) }
         observations.removeAll()
+        output?.delegate = nil
+        boundaryController?.cancel()
         session?.stopRunning()
         session = nil
         output = nil
-        phase = .idle
+        boundaryController = nil
+        control.finish()
         lastResult = result
         lastErrorText = diagnostic?.diagnosticText
         audioConnectionEnabled = false
@@ -490,6 +601,10 @@ final class RecordingEngine: NSObject {
     /// Polling audioChannels is the AVFoundation metering API. Keep only the
     /// latest aggregate; no sample buffers, audio data output or growing history.
     private func refreshMicrophoneStatus() {
+        if let probe = microphoneProbe {
+            audioConnectionEnabled = probe(); audioConnectionActive = audioConnectionEnabled
+            microphoneHealth = audioConnectionEnabled ? "active" : "unavailable"; return
+        }
         guard let connection = output?.connection(with: .audio) else {
             audioConnectionEnabled = false
             audioConnectionActive = false
@@ -540,7 +655,7 @@ final class RecordingEngine: NSObject {
         audioInactiveSince = nil
         if phase == .starting {
             startWatchdog?.cancel()
-            phase = .recording
+            control.started()
             failureStage = .recording
             let callback = startCompletion
             startCompletion = nil
@@ -556,8 +671,12 @@ final class RecordingEngine: NSObject {
 
     private func currentDuration() -> Double {
         guard let movie = output else { return savedElapsed }
-        let seconds = CMTimeGetSeconds(movie.recordedDuration)
-        return seconds.isFinite && seconds >= 0 ? max(savedElapsed, seconds) : savedElapsed
+        // On tested macOS outputs recordedDuration includes encoded preroll
+        // removed by MOV edits (over two seconds after one resume). Use the
+        // same output's sample-boundary PTS, not a wall clock or guessed offset.
+        let seconds = boundaryController?.elapsedSeconds ?? CMTimeGetSeconds(movie.recordedDuration)
+        savedElapsed = control.observeDuration(seconds)
+        return savedElapsed
     }
 
     private func read<T>(_ block: () -> T) -> T {
@@ -569,12 +688,19 @@ final class RecordingEngine: NSObject {
 }
 
 extension RecordingEngine: AVCaptureFileOutputRecordingDelegate {
+    func fileOutput(_ output: AVCaptureFileOutput, didPauseRecordingTo fileURL: URL, from connections: [AVCaptureConnection]) {
+        acknowledgeTransition(.pause, output: output, fileURL: fileURL)
+    }
+    func fileOutput(_ output: AVCaptureFileOutput, didResumeRecordingTo fileURL: URL, from connections: [AVCaptureConnection]) {
+        acknowledgeTransition(.resume, output: output, fileURL: fileURL)
+    }
     func fileOutput(_ output: AVCaptureFileOutput, didStartRecordingTo fileURL: URL,
                     from connections: [AVCaptureConnection]) {
         queue.async {
-            guard self.output === output else { return }
+            guard self.output === output, self.destination == fileURL else { return }
             if self.phase == .stopping { output.stopRecording(); return }
-            guard self.phase == .starting else { return }
+            guard self.phase == .starting, !self.movieDidStart else { return }
+            self.boundaryController?.confirmStart()
             self.movieDidStart = true
             self.audioInactiveSince = nil
             self.refreshMicrophoneStatus()
@@ -585,7 +711,7 @@ extension RecordingEngine: AVCaptureFileOutputRecordingDelegate {
     func fileOutput(_ output: AVCaptureFileOutput, didFinishRecordingTo fileURL: URL,
                     from connections: [AVCaptureConnection], error: Error?) {
         queue.async {
-            guard self.output === output else { return }
+            guard self.output === output, self.destination == fileURL, self.phase != .idle else { return }
             let expectedStop = self.phase == .stopping
             let exists = FileManager.default.fileExists(atPath: fileURL.path)
             let savedSuccessfully = CaptureDiagnostics.mayReportSuccessfulFinish(
@@ -603,6 +729,172 @@ extension RecordingEngine: AVCaptureFileOutputRecordingDelegate {
             // interruption. Never turn an error or pending interruption into
             // success merely because a file exists. Failed files are preserved.
             self.finish(result: result, failure: failure)
+        }
+    }
+}
+
+/// Deterministic native adapter fixture: exercises the actual serial queue,
+/// delegate guards, watchdog and completion routing without capturing a device.
+extension RecordingEngine {
+    static func verifyPauseDriver() throws {
+        func require(_ value: @autoclosure () -> Bool, _ message: String) throws {
+            if !value() { throw NSError(domain: "PointAndTell.PauseDriver", code: 1,
+                userInfo: [NSLocalizedDescriptionKey: message]) }
+        }
+        func waitFor(_ condition: () -> Bool) throws {
+            let deadline = Date().addingTimeInterval(3)
+            while !condition() && Date() < deadline { RunLoop.current.run(until: Date().addingTimeInterval(0.005)) }
+            try require(condition(), "Native driver callback did not complete")
+        }
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString + ".mov")
+        try Data("fake output finalization sentinel".utf8).write(to: url)
+        defer { try? FileManager.default.removeItem(at: url) }
+        let engine = RecordingEngine()
+        func prepare() -> PauseFakeMovieOutput {
+            let fake = PauseFakeMovieOutput(); fake.receiver = engine; fake.url = url
+            engine.queue.sync {
+                engine.control.begin(); engine.control.configured(); engine.control.started()
+                engine.output = fake; engine.destination = url; engine.movieDidStart = true
+                engine.pendingFailure = nil; engine.lastResult = nil; engine.savedElapsed = 0
+                engine.microphoneProbe = { true }; engine.transitionTimeout = 0.15
+            }
+            return fake
+        }
+        var fake = prepare(), callbacks = 0
+        for _ in 0..<50 {
+            engine.pause { if case .success = $0 { callbacks += 1 } }
+            try require(engine.capturePhase == .pausing && engine.canStop, "Pause returned without pending state")
+            engine.queue.sync { fake.paused = true; fake.emitPause() }
+            let expectedPause = callbacks + 1
+            try waitFor { callbacks == expectedPause }
+            try require(engine.capturePhase == .paused && engine.isBusy, "Pause did not remain busy")
+            engine.queue.sync { fake.emitPause() }
+            engine.resume { if case .success = $0 { callbacks += 1 } }
+            try require(engine.capturePhase == .resuming, "Resume was not pending")
+            engine.queue.sync { fake.paused = false; fake.emitResume() }
+            let expectedResume = callbacks + 1
+            try waitFor { callbacks == expectedResume }
+            try require(engine.capturePhase == .recording, "Resume did not restore recording")
+        }
+        var finishes = 0, stops = 0, cancelled = 0
+        engine.onRecordingFinished = { _ in finishes += 1 }
+        engine.pause { if case .failure = $0 { cancelled += 1 } }
+        engine.stop { if case .success = $0 { stops += 1 } }
+        engine.stop { if case .success = $0 { stops += 1 } }
+        try waitFor { stops == 2 && cancelled == 1 && finishes == 1 }
+        try require(fake.stopCalls == 1 && !engine.isBusy, "Stop must seal once and supersede pause")
+        let old = fake; fake = prepare()
+        engine.queue.sync { old.emitPause(); old.emitResume(); old.emitFinish() }
+        try require(engine.isRecording, "Old output changed a new recording")
+        var failures = 0, transitionErrors = 0
+        engine.onFailure = { _ in failures += 1 }
+        engine.pause { if case .failure = $0 { transitionErrors += 1 } }
+        try waitFor { failures == 1 && transitionErrors == 1 && !engine.isBusy }
+        try require(fake.stopCalls == 1 && finishes == 2, "Missing pause callback must finalize once on timeout")
+        fake = prepare(); var paused = false
+        engine.pause { if case .success = $0 { paused = true } }
+        engine.queue.sync { fake.paused = true; fake.emitPause() }; try waitFor { paused }
+        var pausedStop = false
+        engine.stop { if case .success = $0 { pausedStop = true } }; try waitFor { pausedStop }
+        try require(fake.stopCalls == 1, "Paused stop must close without resuming")
+        fake = prepare(); paused = false
+        engine.pause { if case .success = $0 { paused = true } }
+        engine.queue.sync { fake.paused = true; fake.emitPause() }; try waitFor { paused }
+        var resumeCancelled = false, resumeStop = false
+        engine.resume { if case .failure = $0 { resumeCancelled = true } }
+        engine.stop { if case .success = $0 { resumeStop = true } }
+        engine.queue.sync { fake.paused = false; fake.emitResume() }
+        try waitFor { resumeCancelled && resumeStop }
+        try require(!engine.isBusy && fake.stopCalls == 1, "Late resume revived a stopped output")
+        print("PAUSE_DRIVER_OK · 50 cycles, acknowledgements, timeout, old output, duplicate finish and Stop during pause/resume")
+    }
+}
+
+private final class PauseFakeMovieOutput: AVCaptureMovieFileOutput {
+    weak var receiver: RecordingEngine?
+    var url = URL(fileURLWithPath: "/invalid.mov")
+    var paused = false
+    var open = true
+    var stopCalls = 0
+    override var isRecording: Bool { open && !paused }
+    override var isRecordingPaused: Bool { open && paused }
+    override var recordedDuration: CMTime { CMTime(seconds: 10, preferredTimescale: 600) }
+    override var recordedFileSize: Int64 { 100 }
+    override func pauseRecording() {}
+    override func resumeRecording() {}
+    override func stopRecording() { stopCalls += 1; open = false; emitFinish() }
+    func emitPause() { receiver?.fileOutput(self, didPauseRecordingTo: url, from: []) }
+    func emitResume() { receiver?.fileOutput(self, didResumeRecordingTo: url, from: []) }
+    func emitFinish() { receiver?.fileOutput(self, didFinishRecordingTo: url, from: [], error: nil) }
+}
+
+/// macOS file-output delegate: a single pending command and scalar media clock.
+/// The delegate callback has no specified queue. Its small lock never surrounds
+/// AVFoundation calls and never synchronously enters the engine's serial queue.
+private final class CaptureBoundaryController: NSObject, AVCaptureFileOutputDelegate {
+    enum Command { case start(URL), pause, resume, stop }
+    private let lock = NSLock()
+    private weak var receiver: RecordingEngine?
+    private var pending: Command?
+    private var clock = RecordingSampleClock()
+    private var latestPTS: Double?
+    private var latestVideoPTS: Double?
+    private var trace: [String] = []
+    private var cancelled = false
+    init(receiver: RecordingEngine) { self.receiver = receiver }
+    var elapsedSeconds: Double { lock.lock(); defer { lock.unlock() }; return clock.duration }
+    var diagnostics: [String] { lock.lock(); defer { lock.unlock() }; return trace }
+    func confirmStart() {
+        lock.lock(); defer { lock.unlock() }
+        guard !cancelled, let pts = latestPTS else { return }
+        // startRecording may prepare the encoder before writing its first
+        // sample, even in sample-accurate mode. The first didStart callback
+        // establishes the file origin from the current media sample, not time
+        // spent preparing the output. No wall-clock offset is introduced.
+        trace.append("file start confirmed; pts=\(pts); preparation=\(clock.duration)")
+        clock = RecordingSampleClock(); clock.beginSegment(at: pts)
+    }
+    func request(_ command: Command) {
+        lock.lock(); defer { lock.unlock() }
+        if !cancelled { pending = command }
+    }
+    func cancel() { lock.lock(); cancelled = true; pending = nil; lock.unlock() }
+    func fileOutputShouldProvideSampleAccurateRecordingStart(_ output: AVCaptureFileOutput) -> Bool { true }
+    func fileOutput(_ output: AVCaptureFileOutput, didOutputSampleBuffer sampleBuffer: CMSampleBuffer,
+                    from connection: AVCaptureConnection) {
+        // Audio arrives without video encoder reordering latency. Both tracks
+        // still share this one output and the native pause/resume operation.
+        let isAudio = connection.inputPorts.contains(where: { $0.mediaType == .audio })
+        let isVideo = connection.inputPorts.contains(where: { $0.mediaType == .video })
+        guard isAudio || isVideo else { return }
+        let pts = CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds
+        let sampleDuration = CMSampleBufferGetDuration(sampleBuffer).seconds
+        guard pts.isFinite else { return }
+        lock.lock()
+        guard !cancelled else { lock.unlock(); return }
+        if isVideo { latestVideoPTS = pts; lock.unlock(); return }
+        latestPTS = pts
+        let command = pending; pending = nil
+        if let command = command {
+            let name: String
+            switch command { case .start: name = "start"; case .pause: name = "pause"; case .resume: name = "resume"; case .stop: name = "stop" }
+            let lag = latestVideoPTS.map { pts - $0 }
+            trace.append("sample boundary \(name); pts=\(pts); clock=\(clock.duration); videoLag=\(String(describing: lag))")
+            if trace.count > 8 { trace.removeFirst(trace.count - 8) }
+        }
+        switch command {
+        case .start?, .resume?: clock.beginSegment(at: pts)
+        case .pause?, .stop?: clock.endSegment(at: pts)
+        case nil: break
+        }
+        clock.observe(pts: pts, sampleDuration: sampleDuration)
+        lock.unlock()
+        switch command {
+        case .start(let url)?: if let receiver = receiver { output.startRecording(to: url, recordingDelegate: receiver) }
+        case .pause?: output.pauseRecording()
+        case .resume?: output.resumeRecording()
+        case .stop?: output.stopRecording()
+        case nil: break
         }
     }
 }

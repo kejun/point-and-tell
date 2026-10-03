@@ -26,6 +26,7 @@ SIGNATURE="$("$SIGN" --ed-key-file "$FIXTURE/key" -p "$FIXTURE/archives/test.zip
 swift scripts/update-signing.swift verify "$TEST_PUBLIC" "$FIXTURE/archives/test.zip" "$SIGNATURE"
 cp "$FIXTURE/archives/test.zip" "$FIXTURE/tampered.zip"
 printf 'tampered' >> "$FIXTURE/tampered.zip"
+echo "EXPECT_REJECTION: the next signature error belongs to an intentionally tampered archive."
 if swift scripts/update-signing.swift verify "$TEST_PUBLIC" "$FIXTURE/tampered.zip" "$SIGNATURE"; then
   echo "Tampered archive was accepted!" >&2; exit 1
 fi
@@ -59,6 +60,7 @@ validate_feed(validation_copy, manifest, "b" * 40, os.environ["TEST_PUBLIC"])
 feed = p / "archives/appcast.xml"
 feed.write_text(feed.read_text().replace("example.invalid", "tampered.invalid"))
 PY
+echo "EXPECT_REJECTION: the next byte/signature error belongs to an intentionally tampered feed."
 if "$SIGN" --ed-key-file "$FIXTURE/key" --verify "$FIXTURE/archives/appcast.xml"; then
   echo "Tampered feed was accepted!" >&2; exit 1
 fi

@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.5.0 — 2026-10-03
+
+- Add acknowledged native pause/resume for screen and microphone in the same MOV, with bounded transition timeouts and Stop priority.
+- Keep paused recordings busy for exit/update safety; freeze media timing and pen input, preserve existing drawings, and invalidate delayed screenshot requests across transitions.
+- Save stable pause/resume state without rolling back media on metadata failure. Validate a decoded video frame and audio before final automatic transcription.
+- Add 50-cycle core/native fake-output coverage, pause UI/pen checks, and an opt-in real capture probe with explicit unavailable results when permissions or hardware are absent.
+- Source implementation and CI do not establish Big Sur device timing/performance; see [pause verification](docs/PAUSE-RECORDING.md).
+
 ## 0.4.1 — 2026-10-03
 
 - Create one durable card for each completed recording bookmark or pen session, before transcription. Keep screenshot event IDs stable across duplicate callbacks, retries and reopen; equal-time events stay separate.

@@ -12,7 +12,7 @@
 
 ## 关联规则与时间链
 
-1. 截图采集前后分别读取 AVCaptureMovieFileOutput.recordedDuration，并保存两次观测与中值截图时间，均为录制坐标。CGWindowList 截图没有精确视频帧 PTS，详情明确显示此限制。画笔会话开始时间另存 annotationStartSeconds，保存时间放在 endTimestamp，均不替换冻结图的时间。
+1. 截图采集前后分别读取 RecordingEngine 的有效媒体时间，并保存两次观测与中值截图时间，均为录制坐标。v0.5.0 的时钟使用同一 AVCaptureMovieFileOutput 样本边界的 PTS，修正原始 recordedDuration 与成片 edit list 的偏差，见 [暂停计时说明](PAUSE-RECORDING.md)。CGWindowList 截图本身没有精确视频帧 PTS，详情明确显示此限制。画笔会话开始时间另存 annotationStartSeconds，保存时间放在 endTimestamp，均不替换冻结图的时间。
 2. AudioChunker 沿用实际 MOV 音轨 PTS，保留音轨起始偏移，WAV 分片 startSeconds 是录制坐标。供应商句/词毫秒除以 1000，再加一次分片起点；不再叠加墙钟或音轨偏移。
 3. 请求继续使用指定的 qwen-audio-3.0-asr-flash 与原 MAAS 端点；≥60 秒使用 SSE 获取已完成句，较短响应兼容 JSON。解析器仍拒绝未完成/截断的 SSE 与无效时间；完整源文字缺少时间时会保留，供人工校对。
 4. 先建立全部录制截图的稳定顺序。12 秒距离只限制候选检索；画笔持续区间的真实重叠、相邻截图顺序及其间的真实语音停顿共同决定归属。每个真实词/句最多分给一张卡片。

@@ -10,7 +10,7 @@ final class RecordingToolbarPanel: NSPanel {
     private(set) var recordingVisible = false
 
     init() {
-        super.init(contentRect: NSRect(x: 60, y: 60, width: 790, height: 60),
+        super.init(contentRect: NSRect(x: 60, y: 60, width: 930, height: 60),
                    styleMask: [.titled, .nonactivatingPanel], backing: .buffered, defer: false)
         title = "Point & Tell · 录制中"
         level = Self.recordingLevel

@@ -1,0 +1,138 @@
+import Foundation
+import XCTest
+@testable import PointAndTellCore
+
+final class RecordingControlTests: XCTestCase {
+    private func recording() -> RecordingControl {
+        var c = RecordingControl(); XCTAssertTrue(c.begin()); c.configured(); XCTAssertTrue(c.started()); return c
+    }
+    private func request(_ kind: RecordingControl.Kind, _ c: inout RecordingControl) -> RecordingControl.Ticket {
+        guard case .started(let ticket) = c.request(kind) else { fatalError("Expected transition") }; return ticket
+    }
+    func testFiftyPauseCyclesUseNativeClockAndRejectDuplicates() {
+        var c = recording()
+        for index in 0..<50 {
+            let t = Double(index * 18)
+            XCTAssertEqual(c.observeDuration(t + 10), t + 10)
+            let pause = request(.pause, &c)
+            XCTAssertTrue(c.phase.isBusy && c.phase.canStop && !c.phase.canCapture)
+            XCTAssertEqual(c.request(.pause), .rejected)
+            XCTAssertTrue(c.acknowledge(pause)); XCTAssertFalse(c.acknowledge(pause))
+            XCTAssertEqual(c.request(.pause), .unchanged)
+            XCTAssertEqual(c.observeDuration(t + 40), t + 10, "Never accept a drifting paused clock")
+            let resume = request(.resume, &c)
+            XCTAssertEqual(c.request(.resume), .rejected)
+            XCTAssertEqual(c.observeDuration(t + 40), t + 10)
+            XCTAssertTrue(c.acknowledge(resume)); XCTAssertFalse(c.acknowledge(resume))
+            XCTAssertEqual(c.request(.resume), .unchanged)
+            XCTAssertEqual(c.observeDuration(t + 12), t + 12, "No second subtraction of 30 seconds")
+            XCTAssertEqual(c.observeDuration(t + 11), t + 12)
+            XCTAssertEqual(c.observeDuration(t + 18), t + 18)
+            XCTAssertFalse(c.started(), "Resume is not a new start")
+        }
+        XCTAssertEqual(c.duration, 900)
+    }
+    func testStopSupersedesPauseResumeAndOldRecordingCallbacks() {
+        for kind in [RecordingControl.Kind.pause, .resume] {
+            var c = recording()
+            if kind == .resume { let pause = request(.pause, &c); XCTAssertTrue(c.acknowledge(pause)) }
+            let ticket = request(kind, &c)
+            XCTAssertTrue(c.stop()); XCTAssertFalse(c.stop()); XCTAssertNil(c.pending)
+            XCTAssertFalse(c.acknowledge(ticket)); XCTAssertTrue(c.phase.isBusy)
+            c.finish(); XCTAssertFalse(c.phase.isBusy)
+            XCTAssertTrue(c.begin()); c.configured(); XCTAssertTrue(c.started())
+            let next = request(.pause, &c)
+            XCTAssertFalse(c.acknowledge(ticket)); XCTAssertEqual(c.pending, next)
+        }
+    }
+    func testPausedStopAndUnacknowledgedTimeoutNeverNeedResume() {
+        var c = recording(); let pause = request(.pause, &c)
+        XCTAssertTrue(c.acknowledge(pause)); XCTAssertTrue(c.phase.canStop)
+        XCTAssertTrue(c.stop()); c.finish()
+        XCTAssertTrue(c.begin()); c.configured(); XCTAssertTrue(c.started())
+        let lostCallback = request(.pause, &c)
+        // The driver's watchdog takes exactly the same stop path as a user stop.
+        XCTAssertTrue(c.stop()); c.finish(); XCTAssertFalse(c.acknowledge(lostCallback))
+    }
+    func testScreenshotEpochRejectsQueuedCaptureAfterFastPauseResumeAndNewProject() {
+        var c = recording(); let id = c.operationID, epoch = c.screenshotEpoch
+        XCTAssertTrue(c.allowsScreenshot(operationID: id, epoch: epoch))
+        let pause = request(.pause, &c)
+        XCTAssertFalse(c.allowsScreenshot(operationID: id, epoch: epoch))
+        XCTAssertTrue(c.acknowledge(pause)); let resume = request(.resume, &c); XCTAssertTrue(c.acknowledge(resume))
+        XCTAssertFalse(c.allowsScreenshot(operationID: id, epoch: epoch))
+        XCTAssertTrue(c.allowsScreenshot(operationID: id, epoch: c.screenshotEpoch))
+        c.stop(); c.finish(); c.begin(); c.configured(); c.started()
+        XCTAssertFalse(c.allowsScreenshot(operationID: id, epoch: c.screenshotEpoch))
+    }
+    func testStartupRejectsPauseAndInvalidDurationNeverPoisonsClock() {
+        var c = RecordingControl(); XCTAssertEqual(c.request(.pause), .rejected)
+        c.begin(); XCTAssertEqual(c.request(.pause), .rejected)
+        c.configured(); XCTAssertEqual(c.request(.pause), .rejected); c.started()
+        XCTAssertEqual(c.observeDuration(5), 5)
+        for invalid in [Double.nan, .infinity, -1] { XCTAssertEqual(c.observeDuration(invalid), 5) }
+    }
+    func testSampleClockFiftyPausesPreservesRealGapsAndIgnoresPrerollDuration() {
+        var clock = RecordingSampleClock()
+        var sourcePTS = 12345.0
+        for index in 0..<50 {
+            let base = Double(index * 18)
+            clock.beginSegment(at: sourcePTS)
+            clock.observe(pts: sourcePTS + 9.8, sampleDuration: 0.2)
+            XCTAssertEqual(clock.duration, base + 10, accuracy: 0.00001)
+            clock.endSegment(at: sourcePTS + 10)
+            clock.observe(pts: sourcePTS + 39, sampleDuration: 0.2)
+            XCTAssertEqual(clock.duration, base + 10, accuracy: 0.00001)
+            clock.beginSegment(at: sourcePTS + 40)
+            clock.observe(pts: sourcePTS + 42, sampleDuration: 0)
+            XCTAssertEqual(clock.duration, base + 12, accuracy: 0.00001)
+            // A real gap in delivered samples remains on the media timeline.
+            clock.observe(pts: sourcePTS + 47.8, sampleDuration: 0.2)
+            clock.endSegment(at: sourcePTS + 48)
+            XCTAssertEqual(clock.duration, base + 18, accuracy: 0.00001)
+            sourcePTS += 48
+        }
+        clock.endSegment(at: sourcePTS + 100) // Stop while already paused.
+        XCTAssertEqual(clock.duration, 900, accuracy: 0.00001)
+    }
+    func testSampleClockRejectsInvalidAndRegressingPTS() {
+        var clock = RecordingSampleClock()
+        clock.beginSegment(at: .nan); clock.observe(pts: 500, sampleDuration: 1)
+        XCTAssertEqual(clock.duration, 0)
+        clock.beginSegment(at: 100); clock.beginSegment(at: 102)
+        clock.observe(pts: 102, sampleDuration: 0.2)
+        for pts in [Double.nan, .infinity, 99, 101] { clock.observe(pts: pts, sampleDuration: 0.2) }
+        XCTAssertEqual(clock.duration, 2.2, accuracy: 0.00001)
+        clock.endSegment(at: .infinity); clock.endSegment(at: 99)
+        clock.observe(pts: 103, sampleDuration: .nan)
+        XCTAssertEqual(clock.duration, 3)
+    }
+    func testPostResumeScreenshotAndRealASROffsetShareCompressedMediaTime() {
+        var c = recording(); c.observeDuration(10)
+        let pause = request(.pause, &c); c.acknowledge(pause); c.observeDuration(40)
+        let resume = request(.resume, &c); c.acknowledge(resume); c.observeDuration(12)
+        let image = VisualAnchor(timestamp: c.duration, imageRelativePath: "frames/resumed.png", kind: .bookmark)
+        let source = ASRSentence(text: "恢复后的讲解", beginTimeMilliseconds: 1000, endTimeMilliseconds: 2000,
+            words: [ASRWord(text: "恢复后的讲解", beginTimeMilliseconds: 1000, endTimeMilliseconds: 2000)])
+        let segment = source.transcriptSegment(chunkOffset: 11)
+        let cards = ScreenshotCardMatcher.cards(anchors: [image], transcripts: [segment])
+        XCTAssertEqual(image.timestamp, 12)
+        XCTAssertEqual(cards.first?.startSeconds, 12); XCTAssertEqual(cards.first?.endSeconds, 13)
+        XCTAssertEqual(cards.first?.association?.matches.first?.offsetSeconds, 0)
+    }
+    func testPausedCrashRecoveryAndUpdateProtection() throws {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        defer { try? FileManager.default.removeItem(at: root) }
+        let store = ProjectStore(folderURL: root); var project = try store.create(title: "Paused")
+        project.captureState = .paused; project.recording = RecordingInfo(relativePath: "recording.mov", durationSeconds: 10)
+        try store.save(project); let loaded = try store.load()
+        XCTAssertEqual(loaded.captureState, .interrupted); XCTAssertEqual(loaded.recording?.durationSeconds, 10)
+        var c = recording(); let pause = request(.pause, &c); c.acknowledge(pause)
+        XCTAssertTrue(c.phase.isBusy)
+        var gate = AutomaticTranscriptionGate(); gate.arm(projectID: project.id)
+        // No pause/resume path touches this gate; only final media validation consumes it.
+        let resume = request(.resume, &c); c.acknowledge(resume); c.stop(); c.finish()
+        XCTAssertTrue(gate.consume(projectID: project.id, usableAudio: true, needsAudioReview: false, ready: true))
+        XCTAssertFalse(gate.consume(projectID: project.id, usableAudio: true, needsAudioReview: false, ready: true))
+    }
+}

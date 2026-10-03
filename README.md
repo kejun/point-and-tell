@@ -8,7 +8,9 @@ Record your screen while explaining what should change. Mark the important momen
 
 <img src="docs/screenshots/primary-buttons-light.png" width=600>
 
-**Native macOS 11+, Intel + Apple Silicon. Source v0.4.1.** No Electron, local language model, account, server, or database.
+**New in v0.5.0 source:** pause/resume screen and microphone together from the recording toolbar, keeping one MOV. Paused recordings can be ended directly; existing drawings are preserved. See [pause behavior and device verification](docs/PAUSE-RECORDING.md).
+
+**Native macOS 11+, Intel + Apple Silicon. Source v0.5.0.** No Electron, local language model, account, server, or database.
 
 The v0.4.0 source adds signed application updates: automatic checks, a **检查更新…** menu, and download/install/relaunch through Sparkle. Recording, transcription and export defer updates. See [update setup and release instructions](docs/AUTO-UPDATES.md). A signing-configured release is required to activate updating; ordinary unsigned-for-updates development builds keep it disabled.
 
@@ -44,7 +46,7 @@ xattr -dr com.apple.quarantine "/Applications/Point & Tell.app"
 1. On first launch, complete **屏幕录制**, **麦克风**, and **API Key** in the setup window. Connect a display and microphone, grant the two required permissions, enter your key, and acknowledge that recording completion will upload audio to Alibaba Cloud for potentially billed transcription. The workspace stays locked until ready. The key is saved in the local macOS Keychain, never in project files
 2. Click **完成设置，进入工作区**. If macOS requests a restart after granting screen permission, save your key and reopen the app. Returning launches recheck current permissions and hardware; missing prerequisites reopen setup. API-key format/configuration is checked locally; model access and quota are confirmed by the first real transcription
 3. Choose one screen, 5 or 10 fps, and a microphone; click **新建录制** and choose a new local `.pointtell` folder. The recording toolbar stays above other app windows across desktops and full-screen apps without taking keyboard focus. Check its microphone meter while speaking. Use **标记** (Control–Option–M) or **画笔** for screenshots/annotations
-4. Click **结束录制**. The app saves and checks the recording locally, then automatically extracts audio, transcribes with `qwen-audio-3.0-asr-flash`, and associates timestamped speech with the independently saved screenshot cards. Video and screenshots stay local. Low/invalid audio pauses automatic processing; listen locally before manually continuing
+4. Use **暂停 / 继续** on the recording toolbar to pause screen and microphone together. Paused time is excluded from the movie; new screenshots and pen strokes are disabled while paused. Existing drawings can still be saved or cancelled. Click **结束录制**, including while paused. The app saves and checks the recording locally, then automatically extracts audio, transcribes with `qwen-audio-3.0-asr-flash`, and associates timestamped speech with the independently saved screenshot cards. Video and screenshots stay local. Low/invalid audio pauses automatic processing; listen locally before manually continuing
 5. Review/edit the cards and screenshots. To remove a card, select it and click **删除**; the saved deletion is respected by export and retry. Failed or cancelled requests remain available through **继续 / 重试转写**; legacy results show **重新转写 · 补齐时间戳**. Manual retries request upload consent and may incur charges; successful sentence/word-timed chunks are reused; untimed source text stays available for review. No background automatic retry occurs
 6. Use the directly visible **导出独立 HTML…** or **导出图片 + Markdown…** buttons. Review screenshots before sharing. Update the key or permissions through **权限与转写设置…** (⌘,)
 

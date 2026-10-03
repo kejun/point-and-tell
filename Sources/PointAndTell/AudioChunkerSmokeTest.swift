@@ -100,6 +100,14 @@ enum AudioChunkerSmokeTest {
                     try self.require(AVURLAsset(url: missing).tracks(withMediaType: .video).count == 1,
                                      "no-audio fixture is not a valid video MOV")
                     try self.checkRejectedSource(missing, directory: directory)
+                    let audioOnly = directory.appendingPathComponent("audio-without-video.mov")
+                    try self.writeMovie(to: audioOnly, fixture: fixtures[0], includeVideo: false)
+                    do {
+                        _ = try RecordingMediaInspector.inspect(movieURL: audioOnly)
+                        throw TestFailure(message: "Final media check accepted a missing video track")
+                    } catch RecordingMediaInspector.ValidationError.invalidVideo {
+                        self.passedChecks.append("audio-only MOV rejected before automatic transcription")
+                    }
                     let corrupt = directory.appendingPathComponent("corrupt.mov")
                     try Data("intentionally invalid MOV fixture".utf8).write(to: corrupt, options: .withoutOverwriting)
                     try self.checkRejectedSource(corrupt, directory: directory)
@@ -134,7 +142,9 @@ enum AudioChunkerSmokeTest {
                         abs(format.mSampleRate - Double(fixture.rate)) < 0.01,
                         "\(fixture.name): source is not AAC at the requested native rate")
             let originalDigest = try digest(source)
-            let report = try AudioInspector.inspect(movieURL: source)
+            let media = try RecordingMediaInspector.inspect(movieURL: source)
+            let report = media.audio
+            try require(media.durationSeconds > 0, "Final movie duration is invalid")
             try require(report.audioTrackPresent && report.decodedFrameCount > 0, "\(fixture.name): source inspector lost samples")
             // A reader may omit the empty edit (first PTS is the audio offset)
             // or render it as leading PCM silence (first PTS is near zero).
@@ -430,7 +440,7 @@ enum AudioChunkerSmokeTest {
         /// Each MOV has a tiny native H.264 track. Audio is PCM16 generated in
         /// 4096-frame blocks and encoded by AVAssetWriter as 44.1/48 kHz AAC.
         /// Starting video at zero makes the delayed-audio timeline unambiguous.
-        private func writeMovie(to url: URL, fixture: Fixture?) throws {
+        private func writeMovie(to url: URL, fixture: Fixture?, includeVideo: Bool = true) throws {
             let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
             let video = AVAssetWriterInput(mediaType: .video, outputSettings: [
                 AVVideoCodecKey: AVVideoCodecType.h264,
@@ -439,7 +449,7 @@ enum AudioChunkerSmokeTest {
             ])
             video.expectsMediaDataInRealTime = false
             try require(writer.canAdd(video), "native writer rejected the video fixture input")
-            writer.add(video)
+            if includeVideo { writer.add(video) }
             let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: video,
                 sourcePixelBufferAttributes: [
                     kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
@@ -482,12 +492,12 @@ enum AudioChunkerSmokeTest {
                 memset(address, 0, CVPixelBufferGetBytesPerRow(pixel) * CVPixelBufferGetHeight(pixel))
             }
             CVPixelBufferUnlockBaseAddress(pixel, [])
-            for index in 0..<2 {
+            for index in 0..<(includeVideo ? 2 : 0) {
                 try waitUntilReady(video, writer: writer)
                 try require(adaptor.append(pixel, withPresentationTime: CMTime(value: Int64(index), timescale: 30)),
                             "could not append fixture video")
             }
-            video.markAsFinished()
+            if includeVideo { video.markAsFinished() }
 
             if let fixture = fixture, let input = audioInput, let format = audioFormat {
                 let totalFrames = Int(fixture.rate) * fixture.seconds

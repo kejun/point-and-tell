@@ -1,0 +1,265 @@
+#if os(macOS)
+import AppKit
+import AVFoundation
+import PointAndTellCore
+
+/// Opt-in local capture probe. Requires permissions already granted; never opens
+/// a permission dialog, loads a key, or uploads media. CI reports absent hardware
+/// or consent as unavailable, not as a successful device test.
+final class CapturePauseProbe {
+    private let recorder = RecordingEngine()
+    private let directory: URL
+    private var window: NSWindow?
+    private var watchdog: DispatchWorkItem?
+    private var events: [[String: Any]] = []
+    private var completed = false
+    private var pausedClock = 0.0
+    private var finalClock = 0.0
+    private var markerClock = 0.0
+    private var markerRequestClock = 0.0
+    private var displayID = CGMainDisplayID()
+    private let completion: (Int32) -> Void
+    init(directory: URL, completion: @escaping (Int32) -> Void) { self.directory = directory; self.completion = completion }
+    func start() {
+        do { try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true) }
+        catch { finish("failed", detail: error.localizedDescription, code: 1); return }
+        guard CGPreflightScreenCaptureAccess(), AVCaptureDevice.authorizationStatus(for: .audio) == .authorized,
+              !RecordingEngine.microphoneChoices().isEmpty, let screen = NSScreen.main else {
+            finish("unavailable", detail: "Screen/microphone permission or an audio input is unavailable; no device capture was performed.", code: 77); return
+        }
+        let panel = NSWindow(contentRect: screen.frame, styleMask: .borderless, backing: .buffered, defer: false)
+        panel.isReleasedWhenClosed = false; panel.level = .floating
+        panel.backgroundColor = NSColor(deviceRed: 0.1, green: 0.7, blue: 0.2, alpha: 1)
+        panel.makeKeyAndOrderFront(nil); window = panel
+        recorder.onFailure = { [weak self] error in self?.finish("failed", detail: error.localizedDescription, code: 1) }
+        let deadline = DispatchWorkItem { [weak self] in self?.finish("failed", detail: "Native capture probe timed out", code: 1) }
+        watchdog = deadline; DispatchQueue.main.asyncAfter(deadline: .now() + 85, execute: deadline)
+        let display = (screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber)?.uint32Value ?? CGMainDisplayID()
+        displayID = display
+        recorder.start(displayID: display, fps: 5, outputURL: directory.appendingPathComponent("pause-resume.mov")) { [weak self] result in
+            guard let self = self, self.accept(result) else { return }
+            self.note("started")
+            // Start acknowledgement can lag the first written sample. Target
+            // ten media seconds, not ten extra wall seconds after that callback.
+            self.later(max(0, 10 - self.recorder.elapsedSeconds)) { self.pause() }
+        }
+    }
+    private func later(_ seconds: Double, _ action: @escaping () -> Void) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + seconds) { [weak self] in
+            guard self?.completed == false else { return }; action()
+        }
+    }
+    private func pause() {
+        recorder.pause { [weak self] result in
+            guard let self = self, self.accept(result) else { return }
+            self.note("paused"); self.pausedClock = self.recorder.elapsedSeconds
+            // Change the test-only screen after the pause acknowledgement. Any
+            // magenta central pixel in the finalized movie is a test failure.
+            self.window?.backgroundColor = NSColor(deviceRed: 0.8, green: 0.1, blue: 0.8, alpha: 1)
+            self.later(29.5) {
+                guard abs(self.recorder.elapsedSeconds - self.pausedClock) < 0.001 else {
+                    self.finish("failed", detail: "Paused effective clock advanced", code: 1); return
+                }
+                self.window?.backgroundColor = NSColor(deviceRed: 0.1, green: 0.2, blue: 0.8, alpha: 1)
+                self.window?.displayIfNeeded()
+                self.later(0.5) { self.waitForVisibleColor(.blue) { self.resume() } }
+            }
+        }
+    }
+    private func resume() {
+        recorder.resume { [weak self] result in
+            guard let self = self, self.accept(result) else { return }
+            self.note("resumed")
+            self.later(max(0, self.pausedClock + 2 - self.recorder.elapsedSeconds)) {
+                self.markerRequestClock = self.recorder.elapsedSeconds
+                self.note("marker-requested")
+                self.window?.backgroundColor = NSColor(deviceRed: 0.9, green: 0.4, blue: 0.1, alpha: 1)
+                self.window?.displayIfNeeded()
+                self.waitForVisibleColor(.orange) {
+                    self.markerClock = self.recorder.elapsedSeconds; self.note("marker-after-resume")
+                    self.later(0.6) { self.window?.backgroundColor = NSColor(deviceRed: 0.1, green: 0.2, blue: 0.8, alpha: 1) }
+                }
+            }
+            self.later(max(0, self.pausedClock + 8 - self.recorder.elapsedSeconds)) {
+                self.recorder.stop { [weak self] result in
+                    guard let self = self else { return }
+                    switch result {
+                    case .failure(let error): self.finish("failed", detail: error.localizedDescription, code: 1)
+                    case .success(let url): self.inspect(url)
+                    }
+                }
+            }
+        }
+    }
+    private enum ProbeColor: String { case blue, orange }
+    private func waitForVisibleColor(_ color: ProbeColor, started: TimeInterval = ProcessInfo.processInfo.systemUptime,
+                                     completion: @escaping () -> Void) {
+        guard !completed else { return }
+        // WindowServer presentation is asynchronous on virtual displays. Check
+        // actual composed pixels, not merely the NSWindow background property.
+        // This is test-only, a 2x2 read; production still creates no auto shots.
+        let bounds = CGDisplayBounds(displayID)
+        let rect = CGRect(x: bounds.midX, y: bounds.midY, width: 2, height: 2)
+        guard let snapshot = CGWindowListCreateImage(rect, .optionOnScreenOnly, kCGNullWindowID, .bestResolution) else {
+            finish("failed", detail: "Cannot verify the visible probe color", code: 1); return
+        }
+        var pixels = [UInt8](repeating: 0, count: 16)
+        let matched = pixels.withUnsafeMutableBytes { bytes -> Bool in
+            guard let context = CGContext(data: bytes.baseAddress, width: 2, height: 2, bitsPerComponent: 8,
+                bytesPerRow: 8, space: CGColorSpaceCreateDeviceRGB(),
+                bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue | CGBitmapInfo.byteOrder32Big.rawValue) else { return false }
+            context.draw(snapshot, in: CGRect(x: 0, y: 0, width: 2, height: 2))
+            let p = bytes.bindMemory(to: UInt8.self)
+            return color == .blue ? p[0] < 80 && p[1] < 100 && p[2] > 130
+                : p[0] > 180 && p[1] > 50 && p[1] < 180 && p[2] < 80
+        }
+        let delay = ProcessInfo.processInfo.systemUptime - started
+        if matched { events.append(["visibleColor": color.rawValue, "waitSeconds": delay]); completion() }
+        else if delay > 5 { finish("failed", detail: "Probe color did not become visible: \(color)", code: 1) }
+        else { later(0.05) { self.waitForVisibleColor(color, started: started, completion: completion) } }
+    }
+    private func inspect(_ url: URL) {
+        note("finished")
+        finalClock = recorder.elapsedSeconds
+        DispatchQueue.global(qos: .utility).async {
+            let result = Result { () -> [String: Any] in
+                let media = try RecordingMediaInspector.inspect(movieURL: url)
+                guard abs(media.durationSeconds - 18) < 1.2 else { throw ProbeError("Paused wall time remained in MOV duration: \(media.durationSeconds)") }
+                guard abs(self.finalClock - media.durationSeconds) < 0.5 else { throw ProbeError("Live media clock disagrees with finalized MOV: \(self.finalClock) vs \(media.durationSeconds)") }
+                guard abs(self.markerRequestClock - self.pausedClock - 2) < 0.6 else { throw ProbeError("Post-resume screenshot clock drifted") }
+                let asset = AVURLAsset(url: url)
+                var evidence: [String: Any] = ["duration": media.durationSeconds, "audioDecodedDuration": media.audio.durationSeconds]
+                for type in [AVMediaType.video, .audio] {
+                    guard let track = asset.tracks(withMediaType: type).first else { throw ProbeError("Missing media track") }
+                    let reader = try AVAssetReader(asset: asset)
+                    let settings: [String: Any]? = type == .video
+                        ? [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA] : nil
+                    let output = AVAssetReaderTrackOutput(track: track, outputSettings: settings)
+                    output.alwaysCopiesSampleData = false; reader.add(output)
+                    guard reader.startReading() else { throw ProbeError("Cannot read media PTS") }
+                    var count = 0, markers = 0, first = Double.infinity, end = 0.0, gap = 0.0
+                    var visualMarkerPTS: Double?
+                    // Preserve real internal empty edits. Leading audio offset
+                    // is allowed and recorded, not silently independently reset.
+                    for segment in track.segments where segment.isEmpty && segment.timeMapping.target.start.seconds > 0.05 {
+                        gap = max(gap, segment.timeMapping.target.duration.seconds)
+                    }
+                    while reader.status == .reading {
+                        let more: Bool = try autoreleasepool {
+                            guard let sample = output.copyNextSampleBuffer() else { return false }
+                            let pts = CMSampleBufferGetOutputPresentationTimeStamp(sample).seconds
+                            let duration = CMSampleBufferGetOutputDuration(sample).seconds
+                            if CMSampleBufferGetNumSamples(sample) == 0 { markers += 1; return true }
+                            guard pts.isFinite else { throw ProbeError("Invalid \(type.rawValue) media PTS in sample \(count)") }
+                            if count > 0 { gap = max(gap, pts - end) }
+                            first = min(first, pts); end = max(end, pts + (duration.isFinite ? max(0, duration) : 0)); count += 1
+                            if let pixel = CMSampleBufferGetImageBuffer(sample) {
+                                CVPixelBufferLockBaseAddress(pixel, .readOnly)
+                                defer { CVPixelBufferUnlockBaseAddress(pixel, .readOnly) }
+                                let x = CVPixelBufferGetWidth(pixel) / 2, y = CVPixelBufferGetHeight(pixel) / 2
+                                if let base = CVPixelBufferGetBaseAddress(pixel)?.assumingMemoryBound(to: UInt8.self) {
+                                    let i = y * CVPixelBufferGetBytesPerRow(pixel) + x * 4
+                                    if base[i] > 130 && base[i + 1] < 100 && base[i + 2] > 130 { throw ProbeError("Paused magenta screen was written into MOV") }
+                                    if base[i] < 80 && base[i + 1] > 50 && base[i + 1] < 180 && base[i + 2] > 180 {
+                                        visualMarkerPTS = visualMarkerPTS ?? pts
+                                    }
+                                }
+                            }
+                            return true
+                        }
+                        if !more { break }
+                    }
+                    guard reader.status == .completed, count > 0, gap < (type == .video ? 0.8 : 0.25) else { throw ProbeError("Media read failed or pause left a PTS gap: \(gap)") }
+                    if type == .video {
+                        guard let visualPTS = visualMarkerPTS, abs(visualPTS - self.markerClock) < 0.5 else {
+                            throw ProbeError("Post-resume visual marker differs from screenshot clock: \(String(describing: visualMarkerPTS)) vs \(self.markerClock)")
+                        }
+                        evidence["visualMarkerPTS"] = visualPTS
+                    }
+                    evidence[type.rawValue] = ["firstPTS": first, "endPTS": end, "largestGap": gap, "samples": count, "controlMarkers": markers]
+                }
+                return evidence
+            }
+            DispatchQueue.main.async {
+                switch result {
+                case .failure(let error): self.finish("failed", detail: error.localizedDescription, code: 1)
+                case .success(let evidence): self.events.append(["media": evidence]); self.extractAudio(url)
+                }
+            }
+        }
+    }
+    private let chunker = AudioChunker()
+    private func extractAudio(_ url: URL) {
+        // Uses exactly the production MOV -> WAV path; a pause-sized PTS gap
+        // would otherwise be rendered as silence by that path.
+        chunker.chunk(movieURL: url, directory: directory.appendingPathComponent("audio")) { result in
+            switch result {
+            case .failure(let error): self.finish("failed", detail: error.localizedDescription, code: 1)
+            case .success(let chunks):
+                guard chunks.count == 1, let chunk = chunks.first,
+                      abs(chunk.durationSeconds - 18) < 1.2 else { self.finish("failed", detail: "Extracted WAV retained a pause gap", code: 1); return }
+                self.events.append(["wavDuration": chunk.durationSeconds, "wavStart": chunk.startSeconds])
+                self.events.append(["firstCaptureTransitions": self.recorder.transitionDiagnostics])
+                self.verifyPausedStop()
+            }
+        }
+    }
+    private func verifyPausedStop() {
+        recorder.start(displayID: CGMainDisplayID(), fps: 5,
+                       outputURL: directory.appendingPathComponent("paused-stop.mov")) { [weak self] result in
+            guard let self = self, self.accept(result) else { return }
+            self.later(1.5) {
+                self.recorder.pause { result in
+                    guard self.accept(result) else { return }
+                    let clock = self.recorder.elapsedSeconds
+                    self.later(1) {
+                        guard abs(self.recorder.elapsedSeconds - clock) < 0.001 else {
+                            self.finish("failed", detail: "Second paused clock advanced", code: 1); return
+                        }
+                        self.recorder.stop { result in
+                            switch result {
+                            case .failure(let error): self.finish("failed", detail: error.localizedDescription, code: 1)
+                            case .success(let url):
+                                DispatchQueue.global(qos: .utility).async {
+                                    let checked = Result { try RecordingMediaInspector.inspect(movieURL: url) }
+                                    DispatchQueue.main.async {
+                                        switch checked {
+                                        case .failure(let error): self.finish("failed", detail: error.localizedDescription, code: 1)
+                                        case .success(let media):
+                                            guard abs(media.durationSeconds - clock) < 0.5 else {
+                                                self.finish("failed", detail: "Paused Stop timeline mismatch", code: 1); return
+                                            }
+                                            self.events.append(["pausedStopDuration": media.durationSeconds, "pausedStopClock": clock])
+                                            self.finish("passed", detail: "Real native 10s + 30s pause + 8s; MOV/PTS/WAV and visible marker inspected; paused direct Stop also verified. No ASR. Human audio/visual sync and Big Sur remain separate device checks.", code: 0)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    private func note(_ name: String) { events.append(["event": name, "mediaSeconds": recorder.elapsedSeconds, "phase": recorder.status.phase]) }
+    private func accept(_ result: Result<Void, Error>) -> Bool {
+        if case .failure(let error) = result { finish("failed", detail: error.localizedDescription, code: 1); return false }
+        return !completed
+    }
+    private func finish(_ status: String, detail: String, code: Int32) {
+        guard !completed else { return }; completed = true; watchdog?.cancel(); window?.orderOut(nil)
+        let report: [String: Any] = ["status": status, "detail": detail, "os": ProcessInfo.processInfo.operatingSystemVersionString,
+            "events": events, "transitions": recorder.transitionDiagnostics,
+            "captureError": recorder.status.lastError ?? ""]
+        do { try JSONSerialization.data(withJSONObject: report, options: [.prettyPrinted, .sortedKeys]).write(to: directory.appendingPathComponent("results.json"), options: .atomic) }
+        catch { print("CAPTURE_PAUSE_PROBE: could not save evidence: \(error.localizedDescription)") }
+        print("CAPTURE_PAUSE_PROBE \(status): \(detail)")
+        if recorder.isBusy { recorder.stop { _ in self.completion(code) } } else { completion(code) }
+    }
+    private struct ProbeError: LocalizedError {
+        let message: String
+        init(_ message: String) { self.message = message }
+        var errorDescription: String? { message }
+    }
+}
+#endif
